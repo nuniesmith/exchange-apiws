@@ -1,0 +1,133 @@
+[package]
+name          = "exchange-apiws"
+version       = "0.1.0"
+edition       = "2024"
+rust-version  = "1.85"
+authors       = ["nuniesmith"]
+license       = "MIT"
+repository    = "https://github.com/nuniesmith/exchange-apiws"
+description   = "Exchange REST and WebSocket clients — spot trading, futures, account management, and live data streams"
+documentation = "https://docs.rs/exchange-apiws"
+readme        = "README.md"
+keywords      = ["kucoin", "crypto", "trading", "websocket", "futures"]
+categories    = ["api-bindings", "network-programming", "asynchronous"]
+
+# ── Runtime dependencies ───────────────────────────────────────────────────────
+
+[dependencies]
+# Async runtime — minimal surface: time (sleep/interval), macros (tokio::main, select!),
+# and rt-multi-thread for the default multi-core scheduler.
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "time"] }
+
+# HTTP — use rustls so the crate builds on musl/Alpine without OpenSSL.
+# Disable default-features to drop the default OpenSSL backend.
+reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }
+
+# WebSocket — rustls-tls-native-roots uses the OS trust store so wss:// works out of the box.
+tokio-tungstenite = { version = "0.26", features = ["rustls-tls-native-roots"] }
+
+# Streaming combinators (SinkExt / StreamExt) needed for the WS loop.
+futures-util = { version = "0.3", default-features = false, features = ["sink", "std"] }
+
+# Serialisation
+serde      = { version = "1", features = ["derive"] }
+serde_json = "1"
+
+# Error handling
+thiserror = "2"
+anyhow    = "1"
+
+# Structured logging — zero-cost when no subscriber is installed.
+tracing = "0.1"
+
+# Time — serde feature lets Chrono types round-trip through JSON.
+chrono = { version = "0.4", features = ["serde"] }
+
+# Unique client-order IDs.
+uuid = { version = "1", features = ["v4"] }
+
+# KuCoin HMAC-SHA256 signing
+hmac   = "0.12"
+sha2   = "0.10"
+base64 = "0.22"
+
+# ── Dev / test dependencies ────────────────────────────────────────────────────
+
+[dev-dependencies]
+# Integration tests and examples need a runtime.
+tokio = { version = "1", features = ["rt-multi-thread", "macros"] }
+# Print tracing output during `cargo test -- --nocapture`.
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+
+# ── Library entry point ────────────────────────────────────────────────────────
+
+[lib]
+# Must match the crate name with hyphens replaced by underscores.
+# Previously incorrectly set to "indicators" (copy/paste from another project).
+name = "kucoin_apiws"
+path = "src/lib.rs"
+
+# ── Build profiles ─────────────────────────────────────────────────────────────
+
+[profile.dev]
+opt-level = 0
+debug     = true
+
+[profile.release]
+opt-level     = 3
+lto           = "thin"
+codegen-units = 16
+strip         = true
+debug         = false
+panic         = "abort"
+
+[profile.release-with-debug]
+inherits = "release"
+debug    = true
+strip    = false
+
+[profile.ci]
+inherits      = "release"
+lto           = false
+codegen-units = 256
+
+# ── Lint policy ────────────────────────────────────────────────────────────────
+
+[lints.rust]
+unsafe_code  = "warn"
+missing_docs = "warn"   # promote to "warn" — crates.io users expect rustdoc
+
+[lints.clippy]
+all      = { level = "warn", priority = -1 }
+pedantic = { level = "warn", priority = -1 }
+nursery  = { level = "warn", priority = -1 }
+
+# ── Allowed — documented rationale ────────────────────────────────────────────
+
+# KuCoin returns numbers as strings; error paths are self-documenting.
+missing_errors_doc  = "allow"
+missing_panics_doc  = "allow"
+
+# `KuCoinClient::get`, `KuCoinClient::post` etc. — repetition is intentional.
+module_name_repetitions = "allow"
+
+# Builders / constructors are almost always worth calling for side effects.
+must_use_candidate = "allow"
+
+# Numeric conversions: period/size values are always well within f64 range.
+cast_precision_loss      = "allow"
+cast_possible_truncation = "allow"
+cast_sign_loss           = "allow"
+cast_lossless            = "allow"
+
+# Multi-field request bodies; splitting harms readability.
+too_many_arguments = "allow"
+
+# if-let is clearer than map_or for complex bodies.
+option_if_let_else = "allow"
+
+# Domain terms (KC-API-KEY, GTC, IOC) are not code identifiers.
+doc_markdown = "allow"
+
+# Credentials passed by value into constructor; ref complicates call sites.
+needless_pass_by_value = "allow"
