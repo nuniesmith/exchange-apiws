@@ -27,6 +27,7 @@ Async Rust client for exchange REST APIs and WebSocket feeds.
 | `get_mark_price(symbol)` | `GET /api/v1/mark-price/{symbol}/current` |
 | `get_active_contracts()` | `GET /api/v1/contracts/active` |
 | `get_contract(symbol)` | `GET /api/v1/contracts/{symbol}` |
+| `get_ticker(symbol)` | `GET /api/v1/ticker` |
 | `get_risk_limit_levels(symbol)` | `GET /api/v1/contracts/risk-limit/{symbol}` |
 | `get_funding_history(symbol, max_count)` | `GET /api/v1/funding-history` |
 | `place_order(...)` | `POST /api/v1/orders` |

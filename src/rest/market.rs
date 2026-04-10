@@ -217,4 +217,15 @@ impl KuCoinClient {
     pub async fn get_contract(&self, symbol: &str) -> Result<ContractInfo> {
         self.get(&format!("/api/v1/contracts/{symbol}"), &[]).await
     }
+
+    /// Fetch the best bid/ask ticker for a futures `symbol`.
+    ///
+    /// Returns the current best bid price/size, best ask price/size, and a
+    /// server timestamp. Fields are `Option` because they may be absent for
+    /// illiquid symbols.
+    ///
+    /// Endpoint: `GET /api/v1/ticker`
+    pub async fn get_ticker(&self, symbol: &str) -> Result<Ticker> {
+        self.get("/api/v1/ticker", &[("symbol", symbol)]).await
+    }
 }

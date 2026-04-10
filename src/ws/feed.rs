@@ -53,6 +53,7 @@ use crate::ws::types::{WsMessage, WsToken};
 /// # Ok(())
 /// # }
 /// ```
+#[derive(Debug)]
 pub struct KucoinConnector {
     /// Full WSS URL with `?token=…&connectId=…` appended.
     pub negotiated_url: String,
@@ -66,9 +67,7 @@ impl KucoinConnector {
     /// Build a connector from a negotiated WS token.
     pub fn new(token_data: &WsToken, env: KucoinEnv) -> Result<Self> {
         let server = token_data.instance_servers.first().ok_or_else(|| {
-            crate::error::ExchangeError::Config(
-                "KuCoin returned no instance servers".into(),
-            )
+            crate::error::ExchangeError::Config("KuCoin returned no instance servers".into())
         })?;
 
         let negotiated_url = format!(
@@ -245,9 +244,7 @@ impl ExchangeConnector for KucoinConnector {
                 let exchange = self.exchange_name();
 
                 // Public topics — route by topic prefix.
-                if topic.contains("/contractMarket/execution")
-                    || topic.contains("/market/match")
-                {
+                if topic.contains("/contractMarket/execution") || topic.contains("/market/match") {
                     parse_trade(symbol, exchange, &data)
                 } else if topic.contains("/contractMarket/tickerV2")
                     || topic.contains("/contractMarket/ticker")
@@ -381,11 +378,7 @@ fn parse_ticker(symbol: &str, exchange: &str, data: &Value) -> Result<Vec<DataMe
     })])
 }
 
-fn parse_orderbook_depth(
-    symbol: &str,
-    exchange: &str,
-    data: &Value,
-) -> Result<Vec<DataMessage>> {
+fn parse_orderbook_depth(symbol: &str, exchange: &str, data: &Value) -> Result<Vec<DataMessage>> {
     let parse_levels = |arr: &Value| -> Vec<[f64; 2]> {
         arr.as_array()
             .map(|rows| {
@@ -424,11 +417,7 @@ fn parse_orderbook_depth(
     })])
 }
 
-fn parse_level2_delta(
-    symbol: &str,
-    exchange: &str,
-    data: &Value,
-) -> Result<Vec<DataMessage>> {
+fn parse_level2_delta(symbol: &str, exchange: &str, data: &Value) -> Result<Vec<DataMessage>> {
     // KuCoin level2 incremental format: `change: "price,side,qty"` where qty=0 → remove level.
     let change_str = data["change"].as_str().unwrap_or("");
     let mut parts = change_str.splitn(3, ',');
@@ -495,14 +484,9 @@ fn parse_order_update(exchange: &str, data: &Value) -> Result<Vec<DataMessage>> 
     })])
 }
 
-fn parse_position_change(
-    symbol: &str,
-    exchange: &str,
-    data: &Value,
-) -> Result<Vec<DataMessage>> {
-    let exchange_ts = data["changeReason"]
-        .as_str()
-        .and(data["currentTimestamp"].as_i64())
+fn parse_position_change(symbol: &str, exchange: &str, data: &Value) -> Result<Vec<DataMessage>> {
+    let exchange_ts = data["currentTimestamp"]
+        .as_i64()
         .unwrap_or_else(|| chrono::Utc::now().timestamp_millis());
 
     Ok(vec![DataMessage::PositionChange(PositionChange {

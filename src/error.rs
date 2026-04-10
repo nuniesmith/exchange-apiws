@@ -1,3 +1,5 @@
+//! Error types — [`ExchangeError`] and the [`Result`] alias used throughout the crate.
+
 use thiserror::Error;
 
 /// All errors that can be returned by `exchange-apiws`.
