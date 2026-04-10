@@ -14,7 +14,7 @@ use tracing_subscriber::EnvFilter;
 
 use exchange_apiws::{
     Credentials, KuCoinClient, KucoinEnv,
-    actors::DataMessage,
+    actors::{DataMessage, ExchangeConnector},
     ws::{KucoinConnector, WsRunnerConfig, run_feed},
 };
 
@@ -28,7 +28,7 @@ async fn main() -> exchange_apiws::Result<()> {
     let symbol = "XBTUSDTM";
 
     // ── REST: quick snapshot before streaming ─────────────────────────────────
-    let creds  = Credentials::from_env()?;
+    let creds = Credentials::from_env()?;
     let client = KuCoinClient::new(creds, KucoinEnv::LiveFutures);
 
     let balance = client.get_balance("USDT").await?;
@@ -50,14 +50,20 @@ async fn main() -> exchange_apiws::Result<()> {
 
     // ── WebSocket: public feed ────────────────────────────────────────────────
     let token = client.get_ws_token_public().await?;
-    let conn  = Arc::new(KucoinConnector::new(&token, KucoinEnv::LiveFutures)?);
+    let conn = Arc::new(KucoinConnector::new(&token, KucoinEnv::LiveFutures)?);
 
     let mut subs = vec![];
-    if let Some(s) = conn.trade_subscription(symbol)           { subs.push(s); }
-    if let Some(s) = conn.ticker_subscription(symbol)          { subs.push(s); }
-    if let Some(s) = conn.orderbook_depth_subscription(symbol, 5) { subs.push(s); }
+    if let Some(s) = conn.trade_subscription(symbol) {
+        subs.push(s);
+    }
+    if let Some(s) = conn.ticker_subscription(symbol) {
+        subs.push(s);
+    }
+    if let Some(s) = conn.orderbook_depth_subscription(symbol, 5) {
+        subs.push(s);
+    }
 
-    let (tx, mut rx)               = mpsc::channel::<DataMessage>(1024);
+    let (tx, mut rx) = mpsc::channel::<DataMessage>(1024);
     let (shutdown_tx, shutdown_rx) = watch::channel(false);
     let config = WsRunnerConfig::from_ping_interval(conn.ping_interval_secs);
 

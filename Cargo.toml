@@ -2,7 +2,7 @@
 name          = "exchange-apiws"
 version       = "0.1.0"
 edition       = "2024"
-rust-version  = "1.85"
+rust-version  = "1.92.0"
 authors       = ["nuniesmith"]
 license       = "MIT"
 repository    = "https://github.com/nuniesmith/exchange-apiws"

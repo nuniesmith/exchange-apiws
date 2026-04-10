@@ -255,7 +255,7 @@ async fn single_session(
     // Send all subscription messages before entering the recv loop.
     for sub in subscriptions {
         guard.check().await;
-        if let Err(e) = write.send(Message::Text(sub.clone())).await {
+        if let Err(e) = write.send(Message::Text(sub.clone().into())).await {
             warn!(error = %e, "failed to send subscription");
             return SessionOutcome::Disconnected;
         }
@@ -328,7 +328,7 @@ async fn single_session(
                 match serde_json::to_string(&WsMessage::ping()) {
                     Ok(text) => {
                         guard.check().await;
-                        if let Err(e) = write.send(Message::Text(text)).await {
+                        if let Err(e) = write.send(Message::Text(text.into())).await {
                             warn!(error = %e, "ping send failed");
                             return SessionOutcome::Disconnected;
                         }
