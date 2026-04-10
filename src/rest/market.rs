@@ -1,71 +1,109 @@
-//! Market data — kline/candle fetching, ticker, and order book.
-//!
-//! Mirrors Python `fetch_klines`, `fetch_klines_extended`, `fetch_ticker`, `fetch_order_book`.
+//! Market data — klines, ticker, order book snapshot, funding rate, mark price,
+//! and active contract metadata.
+
+use serde::Deserialize;
+use serde_json::Value;
+use tracing::debug;
 
 use crate::client::KuCoinClient;
 use crate::error::Result;
 use crate::types::Candle;
-use serde::Deserialize;
-use tracing::info;
 
 // ── Response types ─────────────────────────────────────────────────────────────
 
-/// Response from `/api/v1/ticker`.
-/// KuCoin returns numbers as strings in the REST API to prevent precision loss.
+/// Single-level ticker returned by `/api/v1/ticker`.
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
-pub struct TickerResponse {
-    pub sequence: u64,
-    pub price: String,
-    pub size: String,
-    pub best_bid_price: String,
-    pub best_bid_size: String,
-    pub best_ask_price: String,
-    pub best_ask_size: String,
+pub struct Ticker {
+    pub symbol: String,
+    pub best_bid_price: Option<f64>,
+    pub best_bid_size: Option<f64>,
+    pub best_ask_price: Option<f64>,
+    pub best_ask_size: Option<f64>,
+    pub ts: Option<i64>,
 }
 
-/// Response from `/api/v1/level2/snapshot`.
+/// Minimal order book snapshot (top-N levels).
+#[derive(Debug, Deserialize)]
+pub struct OrderBookSnapshot {
+    pub sequence: u64,
+    pub asks: Vec<[f64; 2]>,
+    pub bids: Vec<[f64; 2]>,
+    pub ts: Option<i64>,
+}
+
+/// Current funding rate for a futures symbol.
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
-pub struct OrderBookResponse {
-    pub sequence: u64,
-    /// Arrays of [price, size] as strings
-    pub asks: Vec<[String; 2]>,
-    pub bids: Vec<[String; 2]>,
+pub struct FundingRate {
+    pub symbol: String,
+    pub granularity: Option<i64>,
+    pub time_point: Option<i64>,
+    pub value: f64,
+}
+
+/// Current mark price for a futures symbol.
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct MarkPrice {
+    pub symbol: String,
+    pub granularity: Option<i64>,
+    pub time_point: Option<i64>,
+    pub value: f64,
+    pub index_price: Option<f64>,
+}
+
+/// Basic contract metadata returned by `/api/v1/contracts/active`.
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ContractInfo {
+    pub symbol: String,
+    pub root_symbol: Option<String>,
+    pub contract_type: Option<String>,
+    pub first_open_date: Option<i64>,
+    pub expire_date: Option<i64>,
+    pub settle_date: Option<i64>,
+    pub base_currency: Option<String>,
+    pub quote_currency: Option<String>,
+    pub settle_currency: Option<String>,
+    pub max_order_qty: Option<u64>,
+    pub lot_size: Option<u64>,
+    pub tick_size: Option<f64>,
+    pub multiplier: Option<f64>,
+    pub initial_margin: Option<f64>,
+    pub maint_margin_rate: Option<f64>,
+    pub status: Option<String>,
+    pub funding_fee_rate: Option<f64>,
+    pub predicted_funding_fee_rate: Option<f64>,
+    pub open_interest: Option<String>,
+    pub turnover_of24h: Option<f64>,
+    pub volume_of24h: Option<f64>,
+    pub mark_price: Option<f64>,
+    pub index_price_value: Option<f64>,
 }
 
 // ── KuCoinClient methods ──────────────────────────────────────────────────────
 
 impl KuCoinClient {
-    /// Fetch the current ticker for a symbol (best bid/ask and last trade price).
-    pub async fn get_ticker(&self, symbol: &str) -> Result<TickerResponse> {
-        self.get("/api/v1/ticker", &[("symbol", symbol)]).await
-    }
-
-    /// Fetch a Level 2 Order Book snapshot.
-    pub async fn get_orderbook_snapshot(&self, symbol: &str) -> Result<OrderBookResponse> {
-        self.get("/api/v1/level2/snapshot", &[("symbol", symbol)])
-            .await
-    }
-
-    /// Fetch up to 200 recent candles.  Mirrors Python `fetch_klines`.
-    ///
-    /// `/api/v1/kline/query?symbol=XBTUSDTM&granularity=1&from=...&to=...`
+    /// Fetch the most recent `limit` klines for `symbol` at timeframe `granularity`
+    /// (minutes as a string — KuCoin uses `"1"`, `"5"`, `"15"`, `"30"`, `"60"`,
+    /// `"120"`, `"240"`, `"480"`, `"720"`, `"1440"`, `"10080"`).
     pub async fn fetch_klines(
         &self,
         symbol: &str,
         limit: usize,
         granularity: &str,
     ) -> Result<Vec<Candle>> {
-        let limit = limit.min(200);
+        let gran_i = granularity.parse::<i64>().unwrap_or(1);
         let now_ms = chrono::Utc::now().timestamp_millis();
-        let gran_ms = granularity.parse::<i64>().unwrap_or(1) * 60 * 1_000;
-        let from_ms = now_ms - (limit as i64) * gran_ms;
+        let from_ms = now_ms - gran_i * 60_000 * limit as i64;
+        let from_s = from_ms / 1000;
+        let to_s = now_ms / 1000;
 
-        let from = from_ms.to_string();
-        let to = now_ms.to_string();
+        let from = from_s.to_string();
+        let to = to_s.to_string();
 
-        let raw: serde_json::Value = self
+        let raw: Vec<Vec<Value>> = self
             .get(
                 "/api/v1/kline/query",
                 &[
@@ -77,36 +115,38 @@ impl KuCoinClient {
             )
             .await?;
 
-        let mut candles = parse_candle_array(&raw);
-        candles.sort_by_key(|c| c.time);
-
-        info!(count = candles.len(), symbol, "fetched klines");
+        let candles = raw.iter().filter_map(|r| Candle::from_raw(r)).collect();
+        debug!(symbol, granularity, count = raw.len(), "fetched klines");
         Ok(candles)
     }
 
-    /// Paginated fetch for large histories.  Mirrors Python `fetch_klines_extended`.
+    /// Paginated klines fetch — calls the API in multiple windows to return
+    /// more bars than a single API response would allow.
     ///
-    /// Pages backward from `now`, deduplicates by timestamp, returns sorted result.
+    /// Each page window spans at most `page_size` bars.
     pub async fn fetch_klines_extended(
         &self,
         symbol: &str,
-        target: usize,
+        total: usize,
         granularity: &str,
+        page_size: usize,
     ) -> Result<Vec<Candle>> {
-        let gran_min = granularity.parse::<i64>().unwrap_or(1);
-        let window_ms = 200 * gran_min * 60 * 1_000;
-        let pages = ((target + 199) / 200).max(1);
+        let gran_i = granularity.parse::<i64>().unwrap_or(1);
+        let now_ms = chrono::Utc::now().timestamp_millis();
+        let mut all: Vec<Candle> = Vec::with_capacity(total);
+        let mut window_end_ms = now_ms;
 
-        let mut all: std::collections::HashMap<i64, Candle> = std::collections::HashMap::new();
-        let mut end_ms = chrono::Utc::now().timestamp_millis();
+        while all.len() < total {
+            let remaining = total - all.len();
+            let batch = remaining.min(page_size);
+            let window_ms = gran_i * 60_000 * batch as i64;
+            let window_start_ms = window_end_ms - window_ms;
 
-        for page in 0..pages {
-            let start_ms = end_ms - window_ms;
-            let from = start_ms.to_string();
-            let to = end_ms.to_string();
+            let from = (window_start_ms / 1000).to_string();
+            let to = (window_end_ms / 1000).to_string();
 
-            match self
-                .get::<serde_json::Value>(
+            let raw: Vec<Vec<Value>> = self
+                .get(
                     "/api/v1/kline/query",
                     &[
                         ("symbol", symbol),
@@ -115,44 +155,66 @@ impl KuCoinClient {
                         ("to", &to),
                     ],
                 )
-                .await
-            {
-                Ok(raw) => {
-                    let page_candles = parse_candle_array(&raw);
-                    if page_candles.is_empty() {
-                        break;
-                    }
-                    for c in page_candles {
-                        all.insert(c.time, c);
-                    }
-                }
-                Err(e) => {
-                    tracing::warn!(page, symbol, error = %e, "klines page failed — stopping");
-                    break;
-                }
+                .await?;
+
+            let n = raw.len();
+            let mut page: Vec<Candle> = raw.iter().filter_map(|r| Candle::from_raw(r)).collect();
+            page.sort_by_key(|c| c.time);
+            all.extend(page);
+
+            if n == 0 {
+                break;
             }
 
-            end_ms = start_ms;
-            tokio::time::sleep(std::time::Duration::from_millis(250)).await;
+            window_end_ms = window_start_ms - gran_i * 60_000;
         }
 
-        let mut candles: Vec<Candle> = all.into_values().collect();
-        candles.sort_by_key(|c| c.time);
-        info!(count = candles.len(), symbol, "fetch_klines_extended done");
-        Ok(candles)
+        all.sort_by_key(|c| c.time);
+        all.truncate(total);
+        Ok(all)
     }
-}
 
-/// Parse KuCoin kline array `[[ts, o, h, l, c, v], ...]`.
-fn parse_candle_array(val: &serde_json::Value) -> Vec<Candle> {
-    val.as_array()
-        .map(|rows| {
-            rows.iter()
-                .filter_map(|row| {
-                    let arr = row.as_array()?;
-                    Candle::from_raw(arr)
-                })
-                .collect()
-        })
-        .unwrap_or_default()
+    /// Fetch the Level 2 order book snapshot for `symbol`.
+    ///
+    /// Returns the full book. For a lightweight top-N book, use
+    /// [`orderbook_depth_subscription`][crate::ws::KucoinConnector::orderbook_depth_subscription]
+    /// over WebSocket instead.
+    ///
+    /// Endpoint: `GET /api/v1/level2/snapshot`
+    pub async fn get_orderbook_snapshot(&self, symbol: &str) -> Result<OrderBookSnapshot> {
+        self.get("/api/v1/level2/snapshot", &[("symbol", symbol)])
+            .await
+    }
+
+    /// Fetch the current funding rate for a futures `symbol`.
+    ///
+    /// Endpoint: `GET /api/v1/funding-rate/{symbol}/current`
+    pub async fn get_funding_rate(&self, symbol: &str) -> Result<FundingRate> {
+        self.get(&format!("/api/v1/funding-rate/{symbol}/current"), &[])
+            .await
+    }
+
+    /// Fetch the current mark price for a futures `symbol`.
+    ///
+    /// Endpoint: `GET /api/v1/mark-price/{symbol}/current`
+    pub async fn get_mark_price(&self, symbol: &str) -> Result<MarkPrice> {
+        self.get(&format!("/api/v1/mark-price/{symbol}/current"), &[])
+            .await
+    }
+
+    /// Fetch all active futures contracts.
+    ///
+    /// Useful for discovering available symbols and their tick/lot sizes.
+    ///
+    /// Endpoint: `GET /api/v1/contracts/active`
+    pub async fn get_active_contracts(&self) -> Result<Vec<ContractInfo>> {
+        self.get("/api/v1/contracts/active", &[]).await
+    }
+
+    /// Fetch metadata for a single contract by symbol.
+    ///
+    /// Endpoint: `GET /api/v1/contracts/{symbol}`
+    pub async fn get_contract(&self, symbol: &str) -> Result<ContractInfo> {
+        self.get(&format!("/api/v1/contracts/{symbol}"), &[]).await
+    }
 }

@@ -10,27 +10,34 @@
 //!     └── reconnect (exponential backoff)
 //! ```
 //!
+//! ## KuCoin rate limits enforced here
+//!
+//! KuCoin enforces a limit of **100 client-to-server messages per 10 seconds**
+//! per connection (applies to subscribe, unsubscribe, and ping messages).
+//! Exceeding this may cause the server to disconnect the connection.
+//! The runner enforces this limit with a sliding window before sending any
+//! outbound message.
+//!
 //! # Example
 //!
 //! ```no_run
 //! use std::sync::Arc;
 //! use tokio::sync::{mpsc, watch};
-//! use kucoin_apiws::{KuCoinClient, Credentials, KucoinEnv};
-//! use kucoin_apiws::ws::{KucoinConnector, run_feed, WsRunnerConfig};
-//! use kucoin_apiws::actors::DataMessage;
+//! use exchange_apiws::{KuCoinClient, Credentials, KucoinEnv};
+//! use exchange_apiws::ws::{KucoinConnector, run_feed, WsRunnerConfig};
+//! use exchange_apiws::actors::DataMessage;
 //!
 //! #[tokio::main]
-//! async fn main() -> kucoin_apiws::Result<()> {
+//! async fn main() -> exchange_apiws::Result<()> {
 //!     let client = KuCoinClient::new(Credentials::from_env()?, KucoinEnv::LiveFutures);
 //!     let token  = client.get_ws_token_public().await?;
 //!     let conn   = Arc::new(KucoinConnector::new(&token, KucoinEnv::LiveFutures)?);
 //!
-//!     // Build subscriptions for XBTUSDTM — trades + ticker.
 //!     let mut subs = vec![];
 //!     if let Some(s) = conn.trade_subscription("XBTUSDTM")  { subs.push(s); }
 //!     if let Some(s) = conn.ticker_subscription("XBTUSDTM") { subs.push(s); }
 //!
-//!     let (tx, mut rx)        = mpsc::channel::<DataMessage>(1024);
+//!     let (tx, mut rx)               = mpsc::channel::<DataMessage>(1024);
 //!     let (shutdown_tx, shutdown_rx) = watch::channel(false);
 //!     let config = WsRunnerConfig::from_ping_interval(conn.ping_interval_secs);
 //!
@@ -39,14 +46,14 @@
 //!     while let Some(msg) = rx.recv().await {
 //!         println!("{msg:?}");
 //!     }
-//!
 //!     let _ = shutdown_tx.send(true);
 //!     Ok(())
 //! }
 //! ```
 
+use std::collections::VecDeque;
 use std::sync::Arc;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use futures_util::{SinkExt, StreamExt};
 use tokio::sync::{mpsc, watch};
@@ -55,7 +62,7 @@ use tokio_tungstenite::{connect_async, tungstenite::Message};
 use tracing::{debug, error, info, warn};
 
 use crate::actors::{DataMessage, ExchangeConnector};
-use crate::error::{BotError, Result};
+use crate::error::{ExchangeError, Result};
 use crate::ws::types::WsMessage;
 
 // ── Config ────────────────────────────────────────────────────────────────────
@@ -67,7 +74,7 @@ pub struct WsRunnerConfig {
     pub ping_interval_secs: u64,
     /// Base reconnect delay (seconds). Doubles on each attempt, capped at 16×.
     pub reconnect_delay_secs: u64,
-    /// Give up and return [`BotError::WsDisconnected`] after this many
+    /// Give up and return [`ExchangeError::WsDisconnected`] after this many
     /// consecutive failed reconnect attempts. Set to `u32::MAX` to retry forever.
     pub max_reconnect_attempts: u32,
 }
@@ -94,6 +101,51 @@ impl WsRunnerConfig {
     }
 }
 
+// ── Rate-limit guard ──────────────────────────────────────────────────────────
+
+/// Sliding-window rate limiter for outbound WS messages.
+///
+/// KuCoin allows 100 client→server messages per 10 seconds per connection.
+/// This tracks send times in a `VecDeque` and sleeps if the window is full.
+struct WsMsgGuard {
+    window: VecDeque<Instant>,
+    max_msgs: usize,
+    window_dur: Duration,
+}
+
+impl WsMsgGuard {
+    fn new() -> Self {
+        Self {
+            window: VecDeque::with_capacity(100),
+            max_msgs: 100,
+            window_dur: Duration::from_secs(10),
+        }
+    }
+
+    /// Call before every outbound send. Sleeps if the 100/10s quota is full.
+    async fn check(&mut self) {
+        let now = Instant::now();
+        // Drop timestamps older than the window.
+        while self.window.front().map_or(false, |t| now - *t > self.window_dur) {
+            self.window.pop_front();
+        }
+        if self.window.len() >= self.max_msgs {
+            // Sleep until the oldest message falls out of the window.
+            if let Some(oldest) = self.window.front() {
+                let wait = self.window_dur.saturating_sub(now - *oldest);
+                if !wait.is_zero() {
+                    warn!(
+                        wait_ms = wait.as_millis(),
+                        "WS outbound rate limit reached (100/10s) — throttling"
+                    );
+                    tokio::time::sleep(wait).await;
+                }
+            }
+        }
+        self.window.push_back(Instant::now());
+    }
+}
+
 // ── Public entry point ────────────────────────────────────────────────────────
 
 /// Drive a WebSocket feed for any [`ExchangeConnector`].
@@ -111,7 +163,7 @@ impl WsRunnerConfig {
 ///
 /// # Returns
 /// `Ok(())` on clean shutdown.
-/// `Err(BotError::WsDisconnected)` if max reconnect attempts are exhausted.
+/// `Err(ExchangeError::WsDisconnected)` if max reconnect attempts are exhausted.
 pub async fn run_feed(
     ws_url: impl Into<String>,
     subscriptions: Vec<String>,
@@ -125,8 +177,7 @@ pub async fn run_feed(
 
     loop {
         if attempts > 0 {
-            // Exponential backoff, capped at 16× the base.
-            let exp = (attempts - 1).min(4);
+            let exp = (attempts - 1).min(4); // cap at 16× base delay
             let delay = config.reconnect_delay_secs.saturating_mul(1 << exp);
             warn!(
                 attempt = attempts,
@@ -150,11 +201,11 @@ pub async fn run_feed(
 
         match outcome {
             SessionOutcome::ShutdownRequested => {
-                info!(exchange = connector.exchange_name(), "WS feed shut down");
+                info!(exchange = connector.exchange_name(), "WS feed shut down cleanly");
                 return Ok(());
             }
             SessionOutcome::ReceiverDropped => {
-                info!("DataMessage receiver dropped; stopping feed");
+                info!("DataMessage receiver dropped; stopping WS feed");
                 return Ok(());
             }
             SessionOutcome::Disconnected => {
@@ -165,7 +216,7 @@ pub async fn run_feed(
                         exchange = connector.exchange_name(),
                         "WS max reconnect attempts exhausted"
                     );
-                    return Err(BotError::WsDisconnected);
+                    return Err(ExchangeError::WsDisconnected);
                 }
             }
         }
@@ -199,9 +250,11 @@ async fn single_session(
     };
 
     let (mut write, mut read) = ws_stream.split();
+    let mut guard = WsMsgGuard::new();
 
     // Send all subscription messages before entering the recv loop.
     for sub in subscriptions {
+        guard.check().await;
         if let Err(e) = write.send(Message::Text(sub.clone())).await {
             warn!(error = %e, "failed to send subscription");
             return SessionOutcome::Disconnected;
@@ -209,18 +262,19 @@ async fn single_session(
         debug!(topic = ?sub, "subscribed");
     }
 
-    info!(exchange = connector.exchange_name(), "WS connected");
+    info!(exchange = connector.exchange_name(), "WS connected and subscribed");
 
     let mut ping_tick = interval(Duration::from_secs(config.ping_interval_secs));
     ping_tick.tick().await; // discard the immediate first tick
 
     loop {
         tokio::select! {
-            biased; // check shutdown before processing data under high load
+            biased; // prioritise shutdown check under high message load
 
             // ── Shutdown signal ──────────────────────────────────────────────
             Ok(()) = shutdown.changed() => {
                 if *shutdown.borrow() {
+                    guard.check().await;
                     let _ = write.send(Message::Close(None)).await;
                     return SessionOutcome::ShutdownRequested;
                 }
@@ -257,7 +311,7 @@ async fn single_session(
                     Some(Ok(Message::Binary(_))) => {
                         debug!("unexpected binary frame — ignored");
                     }
-                    Some(Ok(_)) => {} // Pong / Frame variants — no action needed
+                    Some(Ok(_)) => {} // Pong / other frame variants — no action
                     Some(Err(e)) => {
                         warn!(error = %e, "WS read error");
                         return SessionOutcome::Disconnected;
@@ -273,6 +327,7 @@ async fn single_session(
             _ = ping_tick.tick() => {
                 match serde_json::to_string(&WsMessage::ping()) {
                     Ok(text) => {
+                        guard.check().await;
                         if let Err(e) = write.send(Message::Text(text)).await {
                             warn!(error = %e, "ping send failed");
                             return SessionOutcome::Disconnected;

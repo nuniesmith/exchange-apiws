@@ -1,95 +1,271 @@
-Good foundation here — let me give you the full picture.Good, I have a complete picture. Let me map it out visually then walk through everything.Here's the full breakdown:
+# exchange-apiws
+
+[![Crates.io](https://img.shields.io/crates/v/exchange-apiws.svg)](https://crates.io/crates/exchange-apiws)
+[![Docs.rs](https://docs.rs/exchange-apiws/badge.svg)](https://docs.rs/exchange-apiws)
+[![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
+
+Async Rust client for exchange REST APIs and WebSocket feeds.
+
+**KuCoin** (Futures + Spot) is fully implemented. The crate is architected to be exchange-agnostic — adding a new exchange means implementing one trait and the shared runner handles the rest.
 
 ---
 
-**Bugs to fix first**
+## Features
 
-`auth.rs` line 55-56 — `KC-API-KEY` is inserted twice. The first insert sets it to `&sig` (the signature, wrong value) and is immediately clobbered by the correct insert below it. Delete the first one:
-```rust
-// DELETE THIS LINE:
-h.insert("KC-API-KEY", hv(&sig));
-// keep only:
-h.insert("KC-API-KEY", hv(key));
+### KuCoin — REST
+
+| Method | Endpoint |
+|--------|----------|
+| `get_balance(currency)` | `GET /api/v1/account-overview` |
+| `get_account_overview(currency)` | `GET /api/v1/account-overview` |
+| `get_position(symbol)` | `GET /api/v1/position` |
+| `get_all_positions()` | `GET /api/v1/positions` |
+| `fetch_klines(symbol, limit, granularity)` | `GET /api/v1/kline/query` |
+| `fetch_klines_extended(...)` | paginated kline fetch |
+| `get_orderbook_snapshot(symbol)` | `GET /api/v1/level2/snapshot` |
+| `get_funding_rate(symbol)` | `GET /api/v1/funding-rate/{symbol}/current` |
+| `get_mark_price(symbol)` | `GET /api/v1/mark-price/{symbol}/current` |
+| `get_active_contracts()` | `GET /api/v1/contracts/active` |
+| `get_contract(symbol)` | `GET /api/v1/contracts/{symbol}` |
+| `get_risk_limit_levels(symbol)` | `GET /api/v1/contracts/risk-limit/{symbol}` |
+| `get_funding_history(symbol, max_count)` | `GET /api/v1/funding-history` |
+| `place_order(...)` | `POST /api/v1/orders` |
+| `close_position(symbol, qty, leverage)` | `POST /api/v1/orders` |
+| `cancel_order(order_id)` | `DELETE /api/v1/orders/{id}` |
+| `cancel_all_orders(symbol)` | `DELETE /api/v1/orders?symbol=…` |
+| `get_open_orders(symbol)` | `GET /api/v1/orders?status=active` |
+| `get_order(order_id)` | `GET /api/v1/orders/{id}` |
+| `get_recent_fills(symbol)` | `GET /api/v1/recentFills` |
+| `place_stop_order(...)` | `POST /api/v1/stopOrders` |
+| `cancel_stop_order(order_id)` | `DELETE /api/v1/stopOrders/{id}` |
+| `cancel_all_stop_orders(symbol)` | `DELETE /api/v1/stopOrders?symbol=…` |
+| `set_auto_deposit(symbol, bool)` | `POST /api/v1/position/changeAutoDeposit` |
+| `set_risk_limit_level(symbol, level)` | `POST /api/v1/position/risk-limit-level/change` |
+
+### KuCoin — WebSocket
+
+| Subscription helper | Topic | Feed type |
+|---------------------|-------|-----------|
+| `trade_subscription(symbol)` | `/contractMarket/execution:{sym}` | `DataMessage::Trade` |
+| `ticker_subscription(symbol)` | `/contractMarket/tickerV2:{sym}` | `DataMessage::Ticker` |
+| `orderbook_depth_subscription(symbol, depth)` | `/contractMarket/level2Depth{5\|50}:{sym}` | `DataMessage::OrderBook` (snapshot) |
+| `orderbook_l2_subscription(symbol)` | `/contractMarket/level2:{sym}` | `DataMessage::OrderBook` (delta) |
+| `order_updates_subscription()` ⚑ | `/contractMarket/tradeOrders` | `DataMessage::OrderUpdate` |
+| `position_subscription(symbol)` ⚑ | `/contract/position:{sym}` | `DataMessage::PositionChange` |
+| `balance_subscription()` ⚑ | `/contractAccount/wallet` | `DataMessage::BalanceUpdate` |
+
+⚑ Requires a **private** WS token — call `client.get_ws_token_private()`.
+
+---
+
+## Installation
+
+```toml
+[dependencies]
+exchange-apiws = "0.1"
+tokio = { version = "1", features = ["rt-multi-thread", "macros"] }
+```
+
+Set your credentials as environment variables:
+
+```
+KC_KEY=your_api_key
+KC_SECRET=your_api_secret
+KC_PASSPHRASE=your_passphrase
 ```
 
 ---
 
-**Active stubs that block real use**
+## Quick start
 
-`rest/orders.rs` — `calc_contracts` always returns `1` and the `BaseSettings` trait is a placeholder. Once you have a real config struct (likely in the FKS bot crate), replace the generic and uncomment the math. The logic itself is correct — just unplug the dummy.
+### REST
 
-`rest/account.rs` — the `set_leverage` path (`/api/v1/position/risk-limit-level/change` with field `lever`) is worth cross-checking against the live KuCoin Futures docs. The actual leverage endpoint is `/api/v1/position/changeAutoDeposit` for margin mode and the leverage setter may be a different path. Worth a quick confirm before wiring it into the bot.
+```rust
+use exchange_apiws::{Credentials, KuCoinClient, KucoinEnv};
+
+#[tokio::main]
+async fn main() -> exchange_apiws::Result<()> {
+    let client = KuCoinClient::new(Credentials::from_env()?, KucoinEnv::LiveFutures);
+
+    let balance  = client.get_balance("USDT").await?;
+    let position = client.get_position("XBTUSDTM").await?;
+    let candles  = client.fetch_klines("XBTUSDTM", 200, "1").await?;
+    let funding  = client.get_funding_rate("XBTUSDTM").await?;
+
+    println!("balance={balance:.2}  qty={}  funding={:.6}", position.current_qty, funding.value);
+    Ok(())
+}
+```
+
+### Public WebSocket feed
+
+```rust
+use std::sync::Arc;
+use tokio::sync::{mpsc, watch};
+use exchange_apiws::{Credentials, KuCoinClient, KucoinEnv, actors::DataMessage};
+use exchange_apiws::ws::{KucoinConnector, WsRunnerConfig, run_feed};
+
+#[tokio::main]
+async fn main() -> exchange_apiws::Result<()> {
+    let client = KuCoinClient::new(Credentials::from_env()?, KucoinEnv::LiveFutures);
+    let token  = client.get_ws_token_public().await?;
+    let conn   = Arc::new(KucoinConnector::new(&token, KucoinEnv::LiveFutures)?);
+
+    let subs = vec![
+        conn.trade_subscription("XBTUSDTM").unwrap(),
+        conn.ticker_subscription("XBTUSDTM").unwrap(),
+    ];
+
+    let (tx, mut rx)               = mpsc::channel::<DataMessage>(1024);
+    let (shutdown_tx, shutdown_rx) = watch::channel(false);
+
+    tokio::spawn(run_feed(
+        conn.ws_url().to_string(),
+        subs,
+        conn,
+        tx,
+        WsRunnerConfig::default(),
+        shutdown_rx,
+    ));
+
+    while let Some(msg) = rx.recv().await {
+        println!("{msg:?}");
+    }
+    Ok(())
+}
+```
+
+### Private WebSocket feed (order fills + positions)
+
+```rust
+// Use get_ws_token_private() and add private subscriptions:
+let token = client.get_ws_token_private().await?;
+let conn  = Arc::new(KucoinConnector::new(&token, KucoinEnv::LiveFutures)?);
+
+let subs = vec![
+    conn.order_updates_subscription().unwrap(),   // fills & status changes
+    conn.position_subscription("XBTUSDTM").unwrap(),
+    conn.balance_subscription().unwrap(),
+];
+// ... same run_feed setup as above
+```
+
+### Contract sizing
+
+```rust
+use exchange_apiws::rest::calc_contracts;
+
+let contracts = calc_contracts(
+    "XBTUSDTM",
+    96_000.0,   // current price
+    1_000.0,    // available balance (USDT)
+    10,         // leverage
+    0.02,       // risk 2% of balance
+    50,         // max contracts cap
+);
+println!("{contracts} contracts");
+```
 
 ---
 
-**The big missing piece: WS runtime**
+## Placing orders
 
-`ws/feed.rs` gives you a `KucoinConnector` that can build a subscription message and parse a single frame, but there's nothing that actually *runs* the connection. You need a `ws/runner.rs` (or expand `feed.rs`) that:
+```rust
+use exchange_apiws::types::{Side, OrderType, TimeInForce, STP};
 
-1. Calls `client.get_ws_token_private()` or `public()`
-2. Constructs the `KucoinConnector` from the token
-3. Opens a `tokio-tungstenite` connection to the negotiated URL
-4. Sends the subscribe message
-5. Runs the select loop: `tokio::select!` between incoming WS frames, a ping interval ticker, and a shutdown signal
-6. On each frame: calls `connector.parse_message()` and sends `DataMessage` to a `tokio::sync::mpsc::Sender<DataMessage>` or `broadcast::Sender`
-7. On disconnect: exponential backoff + reconnect using `WebSocketConfig.reconnect_delay_secs` and `max_reconnect_attempts`
+// Market order
+client.place_order(
+    "XBTUSDTM", Side::Buy, 5, 10,
+    OrderType::Market, None, false, None,
+).await?;
 
-The `WebSocketConfig` struct in `actors.rs` already has all the fields you'd feed into that loop — the scaffolding is thought through, it just needs to be implemented.
+// Limit order with IOC + STP
+client.place_order(
+    "XBTUSDTM", Side::Sell, 3, 10,
+    OrderType::Limit,
+    Some(TimeInForce::IOC),
+    false,
+    Some(STP::CN),
+).await?;
+
+// Stop-market order (close on breach)
+client.place_stop_order(
+    "XBTUSDTM", Side::Sell, 5, 10,
+    93_000.0, "down", None, true,
+).await?;
+```
 
 ---
 
-**Smaller gaps**
+## Rate limits
 
-`ws/feed.rs` `parse_message` — only routes `match`/`trade.l3match` subjects. `TickerData` and `OrderBookData` are defined in `actors.rs` but nothing populates them. Once the runner exists you'll want to add topic routing for `/contractMarket/tickerV2` and `/contractMarket/level2Snapshot`.
+### REST
 
-No private feed subscriptions yet — order fills and position updates are in the `DataMessage` comments but commented out.
+KuCoin enforces per-UID rate limits per resource pool. VIP0 Futures quota is 2,000 requests / 30 seconds. The client automatically:
 
-No `tests/` directory and no `examples/` directory. For a crates.io-targeted lib (which your `Cargo.toml` suggests), both are important. A minimal `examples/market_data.rs` would do a lot for usability.
+- Retries transient failures with exponential backoff (3 attempts, 1.5× factor)
+- Reads the `gw-ratelimit-reset` header on HTTP 429 and sleeps for the exact reset window
+- Returns `ExchangeError::Api` with the KuCoin error code on non-200000 responses
+
+### WebSocket
+
+KuCoin allows **100 client→server messages per 10 seconds per connection** (subscribe, unsubscribe, ping). The runner enforces this with a sliding-window guard before every outbound send — subscriptions sent at startup are rate-limited too, so large subscription batches at connect time will be transparently throttled.
 
 ---
 
-**What's genuinely solid**
+## Error handling
 
-`client.rs` is well-built — the retry + 429 backoff pattern is exactly right. `auth.rs` (minus the key bug) correctly implements KuCoin's v2 HMAC signing. `rest/market.rs` with its paginated `fetch_klines_extended` is production-quality. The `Cargo.toml` lint config is well-considered.
+All fallible functions return `Result<T>` where the error type is `ExchangeError`:
 
-The most impactful next step is the WS runner — everything else depends on it.
+```rust
+use exchange_apiws::ExchangeError;
 
-Good. Let me work through all the blockers and rebuild the WS layer systematically.Now fix `calc_contracts` and `set_leverage`:Now also update `rest/mod.rs` to re-export `calc_contracts`:Now let's try to compile and see what we get:No Rust in the sandbox. Let me do a careful read of the files I wrote and catch any issues manually:All clean. Now package it up:Here's a complete rundown of every change made:
+match client.get_position("XBTUSDTM").await {
+    Ok(pos)  => println!("{}", pos.current_qty),
+    Err(ExchangeError::Api { code, message }) => eprintln!("KuCoin error {code}: {message}"),
+    Err(ExchangeError::WsDisconnected)        => eprintln!("WS gave up after max reconnects"),
+    Err(e)                                    => eprintln!("other error: {e}"),
+}
+```
 
-**Bug fixed — `auth.rs`**
-The `KC-API-KEY` header was inserted twice: first with `&sig` (the signature value, completely wrong), then with `key`. The dead first insert is gone.
+---
 
-**Blocker fixed — `rest/orders.rs`**
-`calc_contracts` is now a standalone `pub fn calc_contracts(symbol, price, balance, leverage, risk_fraction, max_contracts) -> u32` with real math. The `BaseSettings` dummy trait is deleted entirely. It's re-exported from `rest::mod` and from the crate root.
+## Authentication
 
-**Endpoint fix — `rest/account.rs`**
-`set_leverage` was calling `/api/v1/position/changeMarginType` with `FIXED` — that endpoint does not exist in KuCoin Futures. Replaced with two correct methods:
-- `set_auto_deposit(symbol, bool)` → `POST /api/v1/position/changeAutoDeposit`
-- `set_risk_limit_level(symbol, u32)` → `POST /api/v1/position/risk-limit-level/change`
+KuCoin API v2 HMAC-SHA256 signing is implemented in `auth::build_headers`. The prehash string is `{timestamp}{METHOD}{endpoint}{body}`. The passphrase is itself HMAC-signed (not sent raw), which is the v2 requirement.
 
-The doc comment now explains clearly that leverage in KuCoin Futures is a per-order field, not an account-level setting.
+Credentials are loaded from environment variables with `Credentials::from_env()`:
 
-**Rebuilt — `actors.rs`**
-Changed `use anyhow::Result` → `use crate::error::Result` so `ExchangeConnector::parse_message` uses `BotError` consistently. Added `is_snapshot: bool` to `OrderBookData` so consumers know whether they're holding a full snapshot or a delta.
+| Variable | Description |
+|----------|-------------|
+| `KC_KEY` | API key |
+| `KC_SECRET` | API secret |
+| `KC_PASSPHRASE` | API passphrase |
 
-**Rebuilt — `ws/feed.rs`**
-`parse_message` now routes on topic prefix (more reliable than subject alone) and handles all four message types:
-- Trades: futures `/contractMarket/execution` + spot `/market/match`, with `ts` ns→ms conversion
-- Ticker: `tickerV2` + spot `ticker`, field aliases for futures/spot naming differences
-- Orderbook depth snapshots: `level2Depth5`/`level2Depth50` → `is_snapshot: true`
-- Level2 incremental deltas: `change: "price,side,qty"` format → `is_snapshot: false`, qty=0 signals removal
+---
 
-Added four explicit subscription builders on `KucoinConnector`: `trade_subscription`, `ticker_subscription`, `orderbook_depth_subscription`, `orderbook_l2_subscription`.
+## KuCoin-specific notes
 
-**New file — `ws/runner.rs`**
-Full async WS loop:
-- `run_feed(ws_url, subscriptions, connector, tx, config, shutdown)` as the public entry point
-- Inner `single_session` handles connect → subscribe → `tokio::select!` recv/ping/shutdown loop
-- Exponential backoff on reconnect (doubles per attempt, cap at 16×), returns `BotError::WsDisconnected` after `max_reconnect_attempts`
-- `biased` select so shutdown isn't starved under load
-- Handles protocol pings with Pong response, detects receiver drop as clean exit
-- `WsRunnerConfig::from_ping_interval(secs)` constructor to wire in the server-advertised ping interval
+**Leverage** is a per-order field in KuCoin Futures, not an account setting. Pass `leverage` in `place_order` and `close_position`. Use `set_risk_limit_level` to change the max position size tier.
 
-can you work on my blockers and my ws code, make sure we generalize everything as this came from my trading bot, but that is out of the scope of this project, only for communications with kucoin. I want to change the name of this project to exchange-apiws to be open for any exchange, working with kucoin only right now. The name is avail on crates.io i can publish with.
+**Inverse vs. linear contracts** — `calc_contracts` uses a built-in `contract_value` table. Inverse (USD-margined) contracts like `XBTUSDM` have a multiplier of 1 USD. Linear (USDT-margined) contracts like `XBTUSDTM` express a base-coin multiplier (0.001 BTC per contract).
 
-# exchange-apiws
+**Private WS token expiry** — WS tokens are valid for the lifetime of the connection. The runner reconnects automatically; call `get_ws_token_private()` again inside the reconnect flow if you need long-lived private feeds.
+
+---
+
+## Roadmap
+
+- [ ] Binance Futures REST + WS
+- [ ] OKX REST + WS  
+- [ ] Bybit REST + WS
+- [ ] KuCoin Unified Trade Account (UTA) endpoints
+- [ ] KuCoin spot margin orders
+- [ ] WebSocket order placement (`wsapi.kucoin.com`)
+- [ ] Integration test suite with recorded WS frames
+
+---
+
+## License
+
+MIT — see [LICENSE](LICENSE).

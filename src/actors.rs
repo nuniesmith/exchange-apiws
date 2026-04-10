@@ -98,6 +98,10 @@ pub enum DataMessage {
     Trade(TradeData),
     Ticker(TickerData),
     OrderBook(OrderBookData),
+    // Private-feed events — requires a private WS token.
+    OrderUpdate(OrderUpdate),
+    PositionChange(PositionChange),
+    BalanceUpdate(BalanceUpdate),
 }
 
 // ── Connector trait ───────────────────────────────────────────────────────────
@@ -126,4 +130,63 @@ pub trait ExchangeConnector: Send + Sync {
     /// Return `Ok(vec![])` for control frames or topics the connector does
     /// not handle. Only return `Err` for unrecoverable parse failures.
     fn parse_message(&self, raw: &str) -> Result<Vec<DataMessage>>;
+}
+
+/// A fill or status-change event for an order on the private feed.
+///
+/// Emitted on `/contractMarket/tradeOrders` (Futures).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct OrderUpdate {
+    pub symbol: String,
+    pub exchange: String,
+    pub order_id: String,
+    pub client_oid: Option<String>,
+    pub side: TradeSide,
+    /// `"market"` or `"limit"`.
+    pub order_type: String,
+    /// `"open"`, `"filled"`, `"canceled"`, or `"partialFilled"`.
+    pub status: String,
+    pub price: f64,
+    /// Total order size in contracts.
+    pub size: u32,
+    pub filled_size: u32,
+    pub remaining_size: u32,
+    pub fee: f64,
+    /// Exchange timestamp in milliseconds.
+    pub exchange_ts: i64,
+    /// Local receipt timestamp in milliseconds.
+    pub receipt_ts: i64,
+}
+
+/// A position-change event from the private feed.
+///
+/// Emitted on `/contract/position:{symbol}` (Futures).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PositionChange {
+    pub symbol: String,
+    pub exchange: String,
+    /// Positive = long, negative = short, 0 = flat.
+    pub current_qty: i32,
+    pub avg_entry_price: f64,
+    pub unrealised_pnl: f64,
+    pub realised_pnl: f64,
+    /// Why the position changed — e.g. `"positionChange"`, `"liquidation"`, `"funding"`.
+    pub change_reason: String,
+    pub exchange_ts: i64,
+    pub receipt_ts: i64,
+}
+
+/// A balance or margin update from the private feed.
+///
+/// Emitted on `/contractAccount/wallet` (Futures).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct BalanceUpdate {
+    pub exchange: String,
+    pub currency: String,
+    pub available_balance: f64,
+    pub hold_balance: f64,
+    /// Event tag from KuCoin — e.g. `"orderMargin.create"`, `"trade.settled"`.
+    pub event: String,
+    pub exchange_ts: i64,
+    pub receipt_ts: i64,
 }

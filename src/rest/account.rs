@@ -1,4 +1,4 @@
-//! Account management — balance, position query, auto-deposit, and risk limit.
+//! Account management — balance, positions, auto-deposit, risk limit, and funding history.
 //!
 //! # Leverage in KuCoin Futures
 //!
@@ -22,7 +22,7 @@ use crate::error::Result;
 
 // ── Response types ─────────────────────────────────────────────────────────────
 
-/// Response from `/api/v1/account-overview`.
+/// Response from `GET /api/v1/account-overview`.
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct AccountOverview {
@@ -32,7 +32,7 @@ pub struct AccountOverview {
     pub unrealised_pnl: Option<f64>,
 }
 
-/// Response from `/api/v1/position`.
+/// Response from `GET /api/v1/position`.
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct PositionInfo {
@@ -43,6 +43,10 @@ pub struct PositionInfo {
     pub unrealised_pnl: Option<f64>,
     pub realised_pnl: Option<f64>,
     pub leverage: Option<f64>,
+    pub is_open: Option<bool>,
+    pub mark_price: Option<f64>,
+    pub mark_value: Option<f64>,
+    pub maintenance_margin: Option<f64>,
 }
 
 impl PositionInfo {
@@ -57,6 +61,34 @@ impl PositionInfo {
     }
 }
 
+/// A single funding payment record from `GET /api/v1/funding-history`.
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct FundingRecord {
+    pub id: Option<String>,
+    pub symbol: String,
+    pub time_point: Option<i64>,
+    pub funding_rate: Option<f64>,
+    pub mark_price: Option<f64>,
+    pub position_qty: Option<i32>,
+    pub position_cost: Option<f64>,
+    pub funding: Option<f64>,
+    pub settlement: Option<String>,
+}
+
+/// One risk limit tier returned by `GET /api/v1/contracts/risk-limit/{symbol}`.
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct RiskLimitLevel {
+    pub symbol: String,
+    pub level: u32,
+    pub max_risk_limit: Option<f64>,
+    pub min_risk_limit: Option<f64>,
+    pub max_leverage: Option<u32>,
+    pub initial_margin: Option<f64>,
+    pub maint_margin_rate: Option<f64>,
+}
+
 // ── KuCoinClient methods ──────────────────────────────────────────────────────
 
 impl KuCoinClient {
@@ -65,16 +97,28 @@ impl KuCoinClient {
         let overview: AccountOverview = self
             .get("/api/v1/account-overview", &[("currency", currency)])
             .await?;
-        debug!(
-            balance = overview.available_balance,
-            currency, "got balance"
-        );
+        debug!(balance = overview.available_balance, currency, "got balance");
         Ok(overview.available_balance)
     }
 
+    /// Get the full account overview for `currency`.
+    pub async fn get_account_overview(&self, currency: &str) -> Result<AccountOverview> {
+        self.get("/api/v1/account-overview", &[("currency", currency)])
+            .await
+    }
+
     /// Get the current open position for `symbol`.
+    ///
+    /// Endpoint: `GET /api/v1/position`
     pub async fn get_position(&self, symbol: &str) -> Result<PositionInfo> {
         self.get("/api/v1/position", &[("symbol", symbol)]).await
+    }
+
+    /// Get all open positions across all symbols.
+    ///
+    /// Endpoint: `GET /api/v1/positions`
+    pub async fn get_all_positions(&self) -> Result<Vec<PositionInfo>> {
+        self.get("/api/v1/positions", &[]).await
     }
 
     /// Enable or disable automatic margin top-up for `symbol`.
@@ -100,8 +144,8 @@ impl KuCoinClient {
     /// level raises the maximum position size but also increases the maintenance
     /// margin rate. Use level 1 unless you're running large positions.
     ///
-    /// Call [`get_risk_limit_levels`] (REST, not yet implemented here) to see
-    /// the available levels and their margin requirements for your symbol.
+    /// Call [`get_risk_limit_levels`] to see the available tiers and their margin
+    /// requirements for your symbol before changing.
     ///
     /// Endpoint: `POST /api/v1/position/risk-limit-level/change`
     pub async fn set_risk_limit_level(&self, symbol: &str, level: u32) -> Result<()> {
@@ -113,5 +157,42 @@ impl KuCoinClient {
             .await?;
         info!(symbol, level, resp = %resp, "risk limit level updated");
         Ok(())
+    }
+
+    /// Fetch all risk limit tiers available for `symbol`.
+    ///
+    /// Each tier specifies the max leverage, required initial margin, and
+    /// maintenance margin rate. Use this before calling [`set_risk_limit_level`].
+    ///
+    /// Endpoint: `GET /api/v1/contracts/risk-limit/{symbol}`
+    pub async fn get_risk_limit_levels(&self, symbol: &str) -> Result<Vec<RiskLimitLevel>> {
+        self.get(&format!("/api/v1/contracts/risk-limit/{symbol}"), &[])
+            .await
+    }
+
+    /// Fetch funding payment history for `symbol`.
+    ///
+    /// Results are ordered most-recent-first. Use `max_count` to limit the
+    /// number of records returned (KuCoin's max per page is 100).
+    ///
+    /// Endpoint: `GET /api/v1/funding-history`
+    pub async fn get_funding_history(
+        &self,
+        symbol: &str,
+        max_count: u32,
+    ) -> Result<Vec<FundingRecord>> {
+        #[derive(serde::Deserialize)]
+        #[serde(rename_all = "camelCase")]
+        struct Page {
+            data_list: Vec<FundingRecord>,
+        }
+        let limit = max_count.min(100).to_string();
+        let page: Page = self
+            .get(
+                "/api/v1/funding-history",
+                &[("symbol", symbol), ("maxCount", &limit)],
+            )
+            .await?;
+        Ok(page.data_list)
     }
 }

@@ -1,16 +1,26 @@
-//! KuCoin WebSocket connector — message parsing for all public market data topics.
+//! KuCoin WebSocket connector — subscription builders and message parser.
 //!
 //! # Supported topics
 //!
-//! | Topic pattern                         | Env     | Subject        | Emits              |
-//! |---------------------------------------|---------|----------------|--------------------|
-//! | `/contractMarket/execution:{sym}`     | Futures | `match`        | `DataMessage::Trade`     |
-//! | `/market/match:{sym}`                 | Spot    | `trade.l3match`| `DataMessage::Trade`     |
-//! | `/contractMarket/tickerV2:{sym}`      | Futures | `tickerV2`     | `DataMessage::Ticker`    |
-//! | `/market/ticker:{sym}`                | Spot    | `trade.ticker` | `DataMessage::Ticker`    |
-//! | `/contractMarket/level2Depth5:{sym}`  | Futures | `level2Depth5` | `DataMessage::OrderBook` (snapshot) |
-//! | `/contractMarket/level2Depth50:{sym}` | Futures | `level2Depth50`| `DataMessage::OrderBook` (snapshot) |
-//! | `/contractMarket/level2:{sym}`        | Futures | `level2`       | `DataMessage::OrderBook` (delta)    |
+//! ## Public
+//!
+//! | Topic                                 | Env     | Emits                    |
+//! |---------------------------------------|---------|--------------------------|
+//! | `/contractMarket/execution:{sym}`     | Futures | `DataMessage::Trade`     |
+//! | `/market/match:{sym}`                 | Spot    | `DataMessage::Trade`     |
+//! | `/contractMarket/tickerV2:{sym}`      | Futures | `DataMessage::Ticker`    |
+//! | `/market/ticker:{sym}`                | Spot    | `DataMessage::Ticker`    |
+//! | `/contractMarket/level2Depth5:{sym}`  | Futures | `DataMessage::OrderBook` (snapshot) |
+//! | `/contractMarket/level2Depth50:{sym}` | Futures | `DataMessage::OrderBook` (snapshot) |
+//! | `/contractMarket/level2:{sym}`        | Futures | `DataMessage::OrderBook` (delta)    |
+//!
+//! ## Private (requires private WS token)
+//!
+//! | Topic                          | Env     | Emits                         |
+//! |--------------------------------|---------|-------------------------------|
+//! | `/contractMarket/tradeOrders`  | Futures | `DataMessage::OrderUpdate`    |
+//! | `/contract/position:{sym}`     | Futures | `DataMessage::PositionChange` |
+//! | `/contractAccount/wallet`      | Futures | `DataMessage::BalanceUpdate`  |
 //!
 //! Build subscription messages with the dedicated helpers on [`KucoinConnector`]
 //! rather than constructing topic strings by hand.
@@ -19,8 +29,8 @@ use serde_json::Value;
 use uuid::Uuid;
 
 use crate::actors::{
-    DataMessage, ExchangeConnector, OrderBookData, TickerData, TradeData, TradeSide,
-    WebSocketConfig,
+    BalanceUpdate, DataMessage, ExchangeConnector, OrderBookData, OrderUpdate, PositionChange,
+    TickerData, TradeData, TradeSide, WebSocketConfig,
 };
 use crate::client::KucoinEnv;
 use crate::error::Result;
@@ -30,13 +40,14 @@ use crate::ws::types::{WsMessage, WsToken};
 
 /// KuCoin WebSocket connector.
 ///
-/// Construct from a negotiated token returned by [`crate::client::KuCoinClient::get_ws_token_private`]
-/// or [`crate::client::KuCoinClient::get_ws_token_public`].
+/// Construct from a negotiated token returned by
+/// [`KuCoinClient::get_ws_token_private`][crate::client::KuCoinClient::get_ws_token_private]
+/// or [`KuCoinClient::get_ws_token_public`][crate::client::KuCoinClient::get_ws_token_public].
 ///
 /// ```no_run
-/// # use kucoin_apiws::{KuCoinClient, Credentials, KucoinEnv};
-/// # use kucoin_apiws::ws::KucoinConnector;
-/// # async fn example(client: KuCoinClient) -> kucoin_apiws::Result<()> {
+/// # use exchange_apiws::{KuCoinClient, Credentials, KucoinEnv};
+/// # use exchange_apiws::ws::KucoinConnector;
+/// # async fn example(client: KuCoinClient) -> exchange_apiws::Result<()> {
 /// let token = client.get_ws_token_public().await?;
 /// let connector = KucoinConnector::new(&token, KucoinEnv::LiveFutures)?;
 /// # Ok(())
@@ -55,7 +66,9 @@ impl KucoinConnector {
     /// Build a connector from a negotiated WS token.
     pub fn new(token_data: &WsToken, env: KucoinEnv) -> Result<Self> {
         let server = token_data.instance_servers.first().ok_or_else(|| {
-            crate::error::BotError::Config("KuCoin returned no instance servers".into())
+            crate::error::ExchangeError::Config(
+                "KuCoin returned no instance servers".into(),
+            )
         })?;
 
         let negotiated_url = format!(
@@ -73,9 +86,9 @@ impl KucoinConnector {
         })
     }
 
-    // ── Subscription builders ─────────────────────────────────────────────────
+    // ── Public subscription builders ─────────────────────────────────────────
 
-    /// Subscription for live trade executions on `symbol`.
+    /// Subscribe to live trade executions for `symbol`.
     ///
     /// Futures: `/contractMarket/execution:{symbol}` (subject: `match`)
     /// Spot:    `/market/match:{symbol}` (subject: `trade.l3match`)
@@ -87,7 +100,7 @@ impl KucoinConnector {
         self.build_sub(topic, false)
     }
 
-    /// Subscription for best-bid/ask ticker updates on `symbol`.
+    /// Subscribe to best-bid/ask ticker updates for `symbol`.
     ///
     /// Futures: `/contractMarket/tickerV2:{symbol}`
     /// Spot:    `/market/ticker:{symbol}`
@@ -99,13 +112,14 @@ impl KucoinConnector {
         self.build_sub(topic, false)
     }
 
-    /// Subscription for a full order book depth snapshot on `symbol`.
+    /// Subscribe to a full order book depth snapshot for `symbol`.
     ///
-    /// `depth` is clamped to either 5 or 50 levels. Each message is a complete
-    /// snapshot (`OrderBookData::is_snapshot == true`). Use this when you only
-    /// need the top of book and don't want to maintain a local order book.
+    /// `depth` is clamped to 5 or 50 levels. Each message is a complete snapshot
+    /// (`OrderBookData::is_snapshot == true`). Use this when you only need the
+    /// top of book without maintaining a local book.
     ///
     /// Futures: `/contractMarket/level2Depth{5|50}:{symbol}`
+    /// Spot:    `/spotMarket/level2Depth{5|50}:{symbol}`
     pub fn orderbook_depth_subscription(&self, symbol: &str, depth: u8) -> Option<String> {
         let d = if depth <= 5 { 5u8 } else { 50u8 };
         let topic = match self.env {
@@ -115,23 +129,63 @@ impl KucoinConnector {
         self.build_sub(topic, false)
     }
 
-    /// Subscription for full Level 2 incremental order book updates on `symbol`.
+    /// Subscribe to full Level 2 incremental order book updates for `symbol`.
     ///
     /// Each message is a delta (`OrderBookData::is_snapshot == false`).
-    /// `asks` and `bids` each contain exactly one `[price, qty]` entry; when
-    /// `qty == 0.0` the level should be removed from the local book.
+    /// `asks`/`bids` each contain one `[price, qty]` entry; `qty == 0.0` means
+    /// remove that price level from your local book.
     ///
-    /// To bootstrap your local book, fetch a REST snapshot first via
-    /// [`crate::rest::market::KuCoinClient::get_orderbook_snapshot`], then apply
-    /// deltas whose `sequence` is greater than the snapshot's `sequence`.
+    /// To bootstrap, fetch a REST snapshot via
+    /// [`get_orderbook_snapshot`][crate::rest::market::KuCoinClient::get_orderbook_snapshot],
+    /// then apply deltas with `sequence` greater than the snapshot's `sequence`.
     ///
     /// Futures: `/contractMarket/level2:{symbol}`
+    /// Spot:    `/market/level2:{symbol}`
     pub fn orderbook_l2_subscription(&self, symbol: &str) -> Option<String> {
         let topic = match self.env {
             KucoinEnv::LiveFutures => format!("/contractMarket/level2:{symbol}"),
             _ => format!("/market/level2:{symbol}"),
         };
         self.build_sub(topic, false)
+    }
+
+    // ── Private subscription builders ─────────────────────────────────────────
+
+    /// Subscribe to private order fill and status-change events.
+    ///
+    /// Requires a **private** WS token from
+    /// [`get_ws_token_private`][crate::client::KuCoinClient::get_ws_token_private].
+    ///
+    /// Emits `DataMessage::OrderUpdate` on fills and status transitions
+    /// (`open`, `partialFilled`, `filled`, `canceled`).
+    ///
+    /// Topic: `/contractMarket/tradeOrders` (Futures)
+    pub fn order_updates_subscription(&self) -> Option<String> {
+        self.build_sub("/contractMarket/tradeOrders".to_string(), true)
+    }
+
+    /// Subscribe to position changes for `symbol`.
+    ///
+    /// Requires a **private** WS token.
+    ///
+    /// Emits `DataMessage::PositionChange` whenever the position size, mark
+    /// price, or unrealised PnL changes materially.
+    ///
+    /// Topic: `/contract/position:{symbol}` (Futures)
+    pub fn position_subscription(&self, symbol: &str) -> Option<String> {
+        self.build_sub(format!("/contract/position:{symbol}"), true)
+    }
+
+    /// Subscribe to wallet/balance updates.
+    ///
+    /// Requires a **private** WS token.
+    ///
+    /// Emits `DataMessage::BalanceUpdate` on margin movements, funding
+    /// settlements, and order-margin changes.
+    ///
+    /// Topic: `/contractAccount/wallet` (Futures)
+    pub fn balance_subscription(&self) -> Option<String> {
+        self.build_sub("/contractAccount/wallet".to_string(), true)
     }
 
     // ── Internal helpers ──────────────────────────────────────────────────────
@@ -161,9 +215,6 @@ impl ExchangeConnector for KucoinConnector {
         &self.negotiated_url
     }
 
-    /// Returns a [`WebSocketConfig`] using the trade topic as the default
-    /// subscription. For other topics, call the dedicated subscription builders
-    /// and pass the messages to [`crate::ws::runner::run_feed`] directly.
     fn build_ws_config(&self, symbol: &str) -> WebSocketConfig {
         WebSocketConfig {
             url: self.negotiated_url.clone(),
@@ -176,8 +227,6 @@ impl ExchangeConnector for KucoinConnector {
         }
     }
 
-    /// Default subscription is the trade/execution topic.
-    /// Use the dedicated builders for ticker or order book subscriptions.
     fn subscription_message(&self, symbol: &str) -> Option<String> {
         self.trade_subscription(symbol)
     }
@@ -192,13 +241,13 @@ impl ExchangeConnector for KucoinConnector {
                     Some(d) => d,
                     None => return Ok(vec![]),
                 };
-
                 let symbol = extract_symbol(topic);
                 let exchange = self.exchange_name();
 
-                // Route by topic prefix — more reliable than subject alone
-                // since the same subject ("match") can appear on different topics.
-                if topic.contains("/contractMarket/execution") || topic.contains("/market/match") {
+                // Public topics — route by topic prefix.
+                if topic.contains("/contractMarket/execution")
+                    || topic.contains("/market/match")
+                {
                     parse_trade(symbol, exchange, &data)
                 } else if topic.contains("/contractMarket/tickerV2")
                     || topic.contains("/contractMarket/ticker")
@@ -209,6 +258,13 @@ impl ExchangeConnector for KucoinConnector {
                     parse_orderbook_depth(symbol, exchange, &data)
                 } else if topic.contains("level2") {
                     parse_level2_delta(symbol, exchange, &data)
+                // Private topics
+                } else if topic.contains("/contractMarket/tradeOrders") {
+                    parse_order_update(exchange, &data)
+                } else if topic.contains("/contract/position") {
+                    parse_position_change(symbol, exchange, &data)
+                } else if topic.contains("/contractAccount/wallet") {
+                    parse_balance_update(exchange, &data)
                 } else {
                     Ok(vec![])
                 }
@@ -220,7 +276,7 @@ impl ExchangeConnector for KucoinConnector {
     }
 }
 
-// ── Parsers ───────────────────────────────────────────────────────────────────
+// ── Helpers ───────────────────────────────────────────────────────────────────
 
 /// Extract the symbol from a KuCoin topic string (`/prefix:{symbol}`).
 fn extract_symbol(topic: &str) -> &str {
@@ -240,6 +296,18 @@ fn str_f64(data: &Value, key: &str) -> f64 {
         .unwrap_or(0.0)
 }
 
+fn str_u32(data: &Value, key: &str) -> u32 {
+    data.get(key)
+        .and_then(|v| {
+            if let Some(s) = v.as_str() {
+                s.parse().ok()
+            } else {
+                v.as_u64().map(|n| n as u32)
+            }
+        })
+        .unwrap_or(0)
+}
+
 /// Try multiple field names in order, returning the first non-zero value.
 fn first_f64(data: &Value, keys: &[&str]) -> f64 {
     for key in keys {
@@ -250,6 +318,8 @@ fn first_f64(data: &Value, keys: &[&str]) -> f64 {
     }
     0.0
 }
+
+// ── Public parsers ────────────────────────────────────────────────────────────
 
 fn parse_trade(symbol: &str, exchange: &str, data: &Value) -> Result<Vec<DataMessage>> {
     let side = match data["side"].as_str().unwrap_or("buy") {
@@ -283,15 +353,14 @@ fn parse_trade(symbol: &str, exchange: &str, data: &Value) -> Result<Vec<DataMes
 }
 
 fn parse_ticker(symbol: &str, exchange: &str, data: &Value) -> Result<Vec<DataMessage>> {
-    // Futures tickerV2 uses bestBidPrice / bestAskPrice; spot uses bestBid / bestAsk.
+    // Futures tickerV2: bestBidPrice / bestAskPrice; spot: bestBid / bestAsk.
     let best_bid = first_f64(data, &["bestBidPrice", "bestBid"]);
     let best_ask = first_f64(data, &["bestAskPrice", "bestAsk"]);
 
-    // Futures `ts` is nanoseconds; spot `time` is milliseconds.
     let exchange_ts = data["ts"]
         .as_i64()
         .map(|ts| {
-            // Nanoseconds are orders of magnitude larger than ms timestamps.
+            // Nanosecond timestamps are much larger than millisecond ones.
             if ts > 1_700_000_000_000_i64 * 1_000_000 {
                 ts / 1_000_000
             } else {
@@ -312,7 +381,11 @@ fn parse_ticker(symbol: &str, exchange: &str, data: &Value) -> Result<Vec<DataMe
     })])
 }
 
-fn parse_orderbook_depth(symbol: &str, exchange: &str, data: &Value) -> Result<Vec<DataMessage>> {
+fn parse_orderbook_depth(
+    symbol: &str,
+    exchange: &str,
+    data: &Value,
+) -> Result<Vec<DataMessage>> {
     let parse_levels = |arr: &Value| -> Vec<[f64; 2]> {
         arr.as_array()
             .map(|rows| {
@@ -351,8 +424,12 @@ fn parse_orderbook_depth(symbol: &str, exchange: &str, data: &Value) -> Result<V
     })])
 }
 
-fn parse_level2_delta(symbol: &str, exchange: &str, data: &Value) -> Result<Vec<DataMessage>> {
-    // KuCoin level2 incremental format: `change: "price,side,qty"` where qty=0 means remove.
+fn parse_level2_delta(
+    symbol: &str,
+    exchange: &str,
+    data: &Value,
+) -> Result<Vec<DataMessage>> {
+    // KuCoin level2 incremental format: `change: "price,side,qty"` where qty=0 → remove level.
     let change_str = data["change"].as_str().unwrap_or("");
     let mut parts = change_str.splitn(3, ',');
 
@@ -383,5 +460,79 @@ fn parse_level2_delta(symbol: &str, exchange: &str, data: &Value) -> Result<Vec<
         exchange_ts,
         receipt_ts: chrono::Utc::now().timestamp_millis(),
         is_snapshot: false,
+    })])
+}
+
+// ── Private parsers ───────────────────────────────────────────────────────────
+
+fn parse_order_update(exchange: &str, data: &Value) -> Result<Vec<DataMessage>> {
+    let side = match data["side"].as_str().unwrap_or("buy") {
+        s if s.eq_ignore_ascii_case("sell") => TradeSide::Sell,
+        _ => TradeSide::Buy,
+    };
+
+    let exchange_ts = data["ts"]
+        .as_i64()
+        .map(|ns| ns / 1_000_000)
+        .or_else(|| data["updatedAt"].as_i64())
+        .unwrap_or_else(|| chrono::Utc::now().timestamp_millis());
+
+    Ok(vec![DataMessage::OrderUpdate(OrderUpdate {
+        symbol: data["symbol"].as_str().unwrap_or("").to_string(),
+        exchange: exchange.to_string(),
+        order_id: data["orderId"].as_str().unwrap_or("").to_string(),
+        client_oid: data["clientOid"].as_str().map(str::to_string),
+        side,
+        order_type: data["type"].as_str().unwrap_or("market").to_string(),
+        status: data["status"].as_str().unwrap_or("").to_string(),
+        price: str_f64(data, "price"),
+        size: str_u32(data, "size"),
+        filled_size: str_u32(data, "filledSize"),
+        remaining_size: str_u32(data, "remainSize"),
+        fee: str_f64(data, "fee"),
+        exchange_ts,
+        receipt_ts: chrono::Utc::now().timestamp_millis(),
+    })])
+}
+
+fn parse_position_change(
+    symbol: &str,
+    exchange: &str,
+    data: &Value,
+) -> Result<Vec<DataMessage>> {
+    let exchange_ts = data["changeReason"]
+        .as_str()
+        .and(data["currentTimestamp"].as_i64())
+        .unwrap_or_else(|| chrono::Utc::now().timestamp_millis());
+
+    Ok(vec![DataMessage::PositionChange(PositionChange {
+        symbol: symbol.to_string(),
+        exchange: exchange.to_string(),
+        current_qty: data["currentQty"].as_i64().unwrap_or(0) as i32,
+        avg_entry_price: str_f64(data, "avgEntryPrice"),
+        unrealised_pnl: str_f64(data, "unrealisedPnl"),
+        realised_pnl: str_f64(data, "realisedPnl"),
+        change_reason: data["changeReason"]
+            .as_str()
+            .unwrap_or("unknown")
+            .to_string(),
+        exchange_ts,
+        receipt_ts: chrono::Utc::now().timestamp_millis(),
+    })])
+}
+
+fn parse_balance_update(exchange: &str, data: &Value) -> Result<Vec<DataMessage>> {
+    let exchange_ts = data["timestamp"]
+        .as_i64()
+        .unwrap_or_else(|| chrono::Utc::now().timestamp_millis());
+
+    Ok(vec![DataMessage::BalanceUpdate(BalanceUpdate {
+        exchange: exchange.to_string(),
+        currency: data["currency"].as_str().unwrap_or("").to_string(),
+        available_balance: str_f64(data, "availableBalance"),
+        hold_balance: str_f64(data, "holdBalance"),
+        event: data["event"].as_str().unwrap_or("unknown").to_string(),
+        exchange_ts,
+        receipt_ts: chrono::Utc::now().timestamp_millis(),
     })])
 }

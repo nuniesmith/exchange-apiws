@@ -3,7 +3,7 @@
 //! Mirrors KuCoin's `bullet-private` and `bullet-public` endpoints.
 
 use crate::client::KuCoinClient;
-use crate::error::{BotError, Result};
+use crate::error::Result;
 use crate::ws::types::WsToken;
 use tracing::info;
 

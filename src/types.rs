@@ -152,3 +152,81 @@ mod tests {
         assert_eq!(Side::Sell.flip(), Side::Buy);
     }
 }
+
+// ── TimeInForce ───────────────────────────────────────────────────────────────
+
+/// How long an order remains active before execution or expiry.
+///
+/// See KuCoin docs: GTC is the safe default. Market orders do not support TIF.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "UPPERCASE")]
+pub enum TimeInForce {
+    /// Good Till Canceled — expires only when explicitly canceled.
+    GTC,
+    /// Good Till Time — expires at a caller-specified timestamp.
+    GTT,
+    /// Immediate Or Cancel — execute what can fill immediately, cancel the rest.
+    IOC,
+    /// Fill Or Kill — cancel the whole order if it cannot be completely filled.
+    FOK,
+}
+
+impl TimeInForce {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::GTC => "GTC",
+            Self::GTT => "GTT",
+            Self::IOC => "IOC",
+            Self::FOK => "FOK",
+        }
+    }
+}
+
+impl Default for TimeInForce {
+    fn default() -> Self {
+        Self::GTC
+    }
+}
+
+impl std::fmt::Display for TimeInForce {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(self.as_str())
+    }
+}
+
+// ── STP (Self-Trade Prevention) ───────────────────────────────────────────────
+
+/// Self-Trade Prevention strategy.
+///
+/// When set, orders placed by the same UID cannot execute against each other.
+/// Only the taker's STP setting is enforced. Futures STP operates at the
+/// master-UID level by default (all sub-UIDs are covered).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "UPPERCASE")]
+pub enum STP {
+    /// Decrease and Cancel — reduce the larger order by the smaller size, cancel the smaller.
+    DC,
+    /// Cancel Old — cancel the resting order.
+    CO,
+    /// Cancel New — cancel the incoming order.
+    CN,
+    /// Cancel Both — cancel both the resting and incoming orders.
+    CB,
+}
+
+impl STP {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::DC => "DC",
+            Self::CO => "CO",
+            Self::CN => "CN",
+            Self::CB => "CB",
+        }
+    }
+}
+
+impl std::fmt::Display for STP {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(self.as_str())
+    }
+}

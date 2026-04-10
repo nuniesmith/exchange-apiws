@@ -4,5 +4,6 @@ pub mod account;
 pub mod market;
 pub mod orders;
 
-pub use account::{AccountOverview, PositionInfo};
-pub use orders::{OrderResponse, calc_contracts};
+pub use account::{AccountOverview, FundingRecord, PositionInfo, RiskLimitLevel};
+pub use market::{ContractInfo, FundingRate, MarkPrice, OrderBookSnapshot, Ticker};
+pub use orders::{Fill, OrderDetail, OrderResponse, calc_contracts};

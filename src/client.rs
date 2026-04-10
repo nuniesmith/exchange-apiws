@@ -14,7 +14,7 @@ use serde_json::Value;
 use tracing::warn;
 
 use crate::auth::build_headers;
-use crate::error::{BotError, Result};
+use crate::error::{ExchangeError, Result};
 
 // ── Environment Routing ───────────────────────────────────────────────────────
 
@@ -75,7 +75,7 @@ impl Credentials {
 }
 
 fn env(key: &str) -> Result<String> {
-    std::env::var(key).map_err(|_| BotError::Config(format!("{key} not set")))
+    std::env::var(key).map_err(|_| ExchangeError::Config(format!("{key} not set")))
 }
 
 // ── Client ────────────────────────────────────────────────────────────────────
@@ -169,7 +169,7 @@ impl KuCoinClient {
                     warn!(attempt, path, error = %e, wait_secs = wait, "GET failed, retrying");
                     tokio::time::sleep(Duration::from_secs_f64(wait)).await;
                 }
-                Err(e) => return Err(BotError::Http(e)),
+                Err(e) => return Err(ExchangeError::Http(e)),
             }
         }
         unreachable!()
@@ -215,7 +215,7 @@ impl KuCoinClient {
                     warn!(attempt, path, error = %e, wait_secs = wait, "POST failed, retrying");
                     tokio::time::sleep(Duration::from_secs_f64(wait)).await;
                 }
-                Err(e) => return Err(BotError::Http(e)),
+                Err(e) => return Err(ExchangeError::Http(e)),
             }
         }
         unreachable!()
@@ -253,7 +253,7 @@ impl KuCoinClient {
                     warn!(attempt, endpoint, error = %e, wait_secs = wait, "DELETE failed, retrying");
                     tokio::time::sleep(Duration::from_secs_f64(wait)).await;
                 }
-                Err(e) => return Err(BotError::Http(e)),
+                Err(e) => return Err(ExchangeError::Http(e)),
             }
         }
         unreachable!()
@@ -289,11 +289,11 @@ impl KuCoinClient {
                 .and_then(|v| v.as_str())
                 .unwrap_or("no message")
                 .to_string();
-            return Err(BotError::Api { code, message: msg });
+            return Err(ExchangeError::Api { code, message: msg });
         }
 
         let data = raw.get("data").cloned().unwrap_or(Value::Null);
 
-        serde_json::from_value(data).map_err(BotError::Json)
+        serde_json::from_value(data).map_err(ExchangeError::Json)
     }
 }
