@@ -7,9 +7,9 @@
 //! order body. The methods here control the two account-level knobs that affect
 //! how margin is managed:
 //!
-//! - [`set_auto_deposit`] — enable or disable automatic margin top-up when a
+//! - [`KuCoinClient::set_auto_deposit`] — enable or disable automatic margin top-up when a
 //!   position approaches liquidation.
-//! - [`set_risk_limit_level`] — change the risk limit tier (1–N), which controls
+//! - [`KuCoinClient::set_risk_limit_level`] — change the risk limit tier (1–N), which controls
 //!   the maximum position size and the minimum maintenance margin rate. A higher
 //!   level allows larger positions but requires proportionally more margin.
 
@@ -26,9 +26,13 @@ use crate::error::Result;
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct AccountOverview {
+    /// Balance available for trading or withdrawal.
     pub available_balance: f64,
+    /// Margin currently locked in open orders.
     pub order_margin: Option<f64>,
+    /// Margin currently locked in open positions.
     pub position_margin: Option<f64>,
+    /// Total unrealised profit/loss across all open positions.
     pub unrealised_pnl: Option<f64>,
 }
 
@@ -38,25 +42,39 @@ pub struct AccountOverview {
 pub struct PositionInfo {
     /// Positive = long, negative = short, 0 = flat.
     pub current_qty: i32,
+    /// Instrument symbol.
     pub symbol: String,
+    /// Volume-weighted average entry price, if a position is open.
     pub avg_entry_price: Option<f64>,
+    /// Current unrealised profit/loss in quote currency.
     pub unrealised_pnl: Option<f64>,
+    /// Cumulative realised profit/loss in quote currency.
     pub realised_pnl: Option<f64>,
+    /// Effective leverage of the current position.
     pub leverage: Option<f64>,
+    /// `true` when a position is open (non-zero quantity).
     pub is_open: Option<bool>,
+    /// Current mark price used for unrealised PnL and liquidation.
     pub mark_price: Option<f64>,
+    /// Notional value of the position at the current mark price.
     pub mark_value: Option<f64>,
+    /// Maintenance margin required to avoid liquidation.
     pub maintenance_margin: Option<f64>,
 }
 
 impl PositionInfo {
-    pub fn is_flat(&self) -> bool {
+    /// Returns `true` when `current_qty` is zero (no open position).
+    pub const fn is_flat(&self) -> bool {
         self.current_qty == 0
     }
-    pub fn is_long(&self) -> bool {
+
+    /// Returns `true` when `current_qty` is positive (long position).
+    pub const fn is_long(&self) -> bool {
         self.current_qty > 0
     }
-    pub fn is_short(&self) -> bool {
+
+    /// Returns `true` when `current_qty` is negative (short position).
+    pub const fn is_short(&self) -> bool {
         self.current_qty < 0
     }
 }
@@ -65,14 +83,23 @@ impl PositionInfo {
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct FundingRecord {
+    /// Exchange-assigned record identifier.
     pub id: Option<String>,
+    /// Instrument symbol this payment relates to.
     pub symbol: String,
+    /// Unix timestamp of the funding settlement (milliseconds).
     pub time_point: Option<i64>,
+    /// Funding rate applied at this settlement.
     pub funding_rate: Option<f64>,
+    /// Mark price at the time of settlement.
     pub mark_price: Option<f64>,
+    /// Position size (contracts) at the time of settlement.
     pub position_qty: Option<i32>,
+    /// Notional position cost at the time of settlement.
     pub position_cost: Option<f64>,
+    /// Funding payment amount (positive = received, negative = paid).
     pub funding: Option<f64>,
+    /// Settlement currency (e.g. `"USDT"`).
     pub settlement: Option<String>,
 }
 
@@ -80,12 +107,19 @@ pub struct FundingRecord {
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct RiskLimitLevel {
+    /// Instrument symbol this tier applies to.
     pub symbol: String,
+    /// Tier number (1 = lowest risk/smallest position, N = highest).
     pub level: u32,
+    /// Maximum notional value allowed at this tier.
     pub max_risk_limit: Option<f64>,
+    /// Minimum notional value required to use this tier.
     pub min_risk_limit: Option<f64>,
+    /// Maximum leverage permitted at this tier.
     pub max_leverage: Option<u32>,
+    /// Initial margin rate required at this tier.
     pub initial_margin: Option<f64>,
+    /// Maintenance margin rate — drop below this to trigger liquidation.
     pub maint_margin_rate: Option<f64>,
 }
 
@@ -147,7 +181,7 @@ impl KuCoinClient {
     /// level raises the maximum position size but also increases the maintenance
     /// margin rate. Use level 1 unless you're running large positions.
     ///
-    /// Call [`get_risk_limit_levels`] to see the available tiers and their margin
+    /// Call [`KuCoinClient::get_risk_limit_levels`] to see the available tiers and their margin
     /// requirements for your symbol before changing.
     ///
     /// Endpoint: `POST /api/v1/position/risk-limit-level/change`
@@ -165,7 +199,7 @@ impl KuCoinClient {
     /// Fetch all risk limit tiers available for `symbol`.
     ///
     /// Each tier specifies the max leverage, required initial margin, and
-    /// maintenance margin rate. Use this before calling [`set_risk_limit_level`].
+    /// maintenance margin rate. Use this before calling [`KuCoinClient::set_risk_limit_level`].
     ///
     /// Endpoint: `GET /api/v1/contracts/risk-limit/{symbol}`
     pub async fn get_risk_limit_levels(&self, symbol: &str) -> Result<Vec<RiskLimitLevel>> {

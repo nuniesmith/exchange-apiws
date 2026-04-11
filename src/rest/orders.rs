@@ -16,6 +16,7 @@ use crate::types::{OrderType, STP, Side, TimeInForce, contract_value};
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct OrderResponse {
+    /// Exchange-assigned order identifier.
     pub order_id: String,
 }
 
@@ -23,21 +24,34 @@ pub struct OrderResponse {
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct OrderDetail {
+    /// Exchange-assigned order identifier.
     pub id: String,
+    /// Instrument symbol.
     pub symbol: String,
+    /// Order side — `"buy"` or `"sell"`.
     pub side: String,
     #[serde(rename = "type")]
+    /// Order type — `"market"` or `"limit"`.
     pub order_type: String,
     /// `"active"` or `"done"`.
     pub status: String,
+    /// Limit price (absent for market orders).
     pub price: Option<f64>,
+    /// Total order quantity in contracts.
     pub size: u32,
+    /// Number of contracts filled.
     pub filled_size: Option<u32>,
+    /// Number of contracts still open.
     pub remaining_size: Option<u32>,
+    /// Leverage specified at order placement.
     pub leverage: Option<String>,
+    /// `true` if this order can only reduce an open position.
     pub reduce_only: Option<bool>,
+    /// Time-in-force policy (e.g. `"GTC"`).
     pub time_in_force: Option<String>,
+    /// Unix timestamp when the order was created (milliseconds).
     pub created_at: Option<i64>,
+    /// Unix timestamp of the last status update (milliseconds).
     pub updated_at: Option<i64>,
 }
 
@@ -45,15 +59,25 @@ pub struct OrderDetail {
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Fill {
+    /// Instrument symbol.
     pub symbol: String,
+    /// Order that generated this fill.
     pub order_id: String,
+    /// Fill side — `"buy"` or `"sell"`.
     pub side: String,
+    /// Execution price.
     pub price: f64,
+    /// Quantity filled in contracts.
     pub size: u32,
+    /// Fee charged for this fill.
     pub fee: f64,
+    /// Currency the fee was charged in.
     pub fee_currency: Option<String>,
-    pub liquidity: Option<String>, // "maker" | "taker"
+    /// `"maker"` or `"taker"` — determines fee tier.
+    pub liquidity: Option<String>,
+    /// Exchange-assigned trade identifier.
     pub trade_id: Option<String>,
+    /// Unix timestamp when the fill occurred (milliseconds).
     pub created_at: Option<i64>,
 }
 
@@ -100,6 +124,7 @@ impl KuCoinClient {
     ///
     /// `leverage` is passed as a per-order field. `time_in_force` defaults to
     /// [`TimeInForce::GTC`] when `None`. Pass `stp` to enable Self-Trade Prevention.
+    #[allow(clippy::similar_names)] // `side` and `size` are the correct public API parameter names
     pub async fn place_order(
         &self,
         symbol: &str,
@@ -147,13 +172,13 @@ impl KuCoinClient {
             return Err(ExchangeError::Order("qty is 0 — nothing to close".into()));
         }
         let side = if qty > 0 { Side::Sell } else { Side::Buy };
-        let size = qty.unsigned_abs();
+        let abs_qty = qty.unsigned_abs();
         let body = json!({
             "clientOid":   Uuid::new_v4().to_string(),
             "side":        side.as_str(),
             "symbol":      symbol,
             "type":        "market",
-            "size":        size,
+            "size":        abs_qty,
             "leverage":    leverage.to_string(),
             "closeOrder":  true,
             "timeInForce": "GTC",
@@ -216,6 +241,7 @@ impl KuCoinClient {
     /// stop-limit.
     ///
     /// Endpoint: `POST /api/v1/stopOrders`
+    #[allow(clippy::similar_names)] // `side` and `size` are the correct public API parameter names
     pub async fn place_stop_order(
         &self,
         symbol: &str,

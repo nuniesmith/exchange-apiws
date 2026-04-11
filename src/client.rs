@@ -1,6 +1,5 @@
 //! `KuCoinClient` — authenticated reqwest wrapper with exponential-backoff retry.
 //!
-//! Mirrors Python `_rest_get` / `_rest_post` / `_rest_delete`:
 //! - Signs every request via `auth::build_headers`
 //! - Retries on transient failures with configurable backoff
 //! - Auto-pauses on HTTP 429 (Rate Limit) using KuCoin's reset headers
@@ -21,17 +20,20 @@ use crate::error::{ExchangeError, Result};
 /// KuCoin API Environment. Allows routing to Spot, Futures, or UTA.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum KucoinEnv {
+    /// KuCoin Spot exchange (`api.kucoin.com`).
     LiveSpot,
+    /// KuCoin Futures exchange (`api-futures.kucoin.com`).
     LiveFutures,
+    /// KuCoin Unified Trade Account — routes to the Spot base URL.
     Unified, // Unified Trade Account
 }
 
 impl KucoinEnv {
-    pub fn rest_base(&self) -> &'static str {
+    /// Base REST URL for this environment.
+    pub const fn rest_base(&self) -> &'static str {
         match self {
-            Self::LiveSpot => "https://api.kucoin.com",
             Self::LiveFutures => "https://api-futures.kucoin.com",
-            Self::Unified => "https://api.kucoin.com",
+            Self::LiveSpot | Self::Unified => "https://api.kucoin.com",
         }
     }
 }
@@ -41,12 +43,16 @@ impl KucoinEnv {
 /// API credentials loaded from environment or passed directly.
 #[derive(Clone)]
 pub struct Credentials {
+    /// KuCoin API key.
     pub key: String,
+    /// KuCoin API secret used for HMAC-SHA256 signing.
     pub secret: String,
+    /// KuCoin API passphrase set at key creation time.
     pub passphrase: String,
 }
 
 impl Credentials {
+    /// Construct credentials directly from strings.
     pub fn new(
         key: impl Into<String>,
         secret: impl Into<String>,
@@ -94,6 +100,7 @@ impl KuCoinClient {
         Self::with_base_url(creds, env.rest_base())
     }
 
+    /// Create a client with an explicit base URL (useful for testing/proxies).
     pub fn with_base_url(creds: Credentials, base_url: impl Into<String>) -> Self {
         let http = Client::builder()
             .timeout(Duration::from_secs(10))
@@ -165,7 +172,7 @@ impl KuCoinClient {
                     return Self::unwrap_envelope(raw);
                 }
                 Err(e) if attempt < retries - 1 => {
-                    let wait = backoff.powi(attempt as i32 + 1);
+                    let wait = backoff.powi(attempt.cast_signed() + 1);
                     warn!(attempt, path, error = %e, wait_secs = wait, "GET failed, retrying");
                     tokio::time::sleep(Duration::from_secs_f64(wait)).await;
                 }
@@ -211,7 +218,7 @@ impl KuCoinClient {
                     return Self::unwrap_envelope(raw);
                 }
                 Err(e) if attempt < retries - 1 => {
-                    let wait = backoff.powi(attempt as i32 + 1);
+                    let wait = backoff.powi(attempt.cast_signed() + 1);
                     warn!(attempt, path, error = %e, wait_secs = wait, "POST failed, retrying");
                     tokio::time::sleep(Duration::from_secs_f64(wait)).await;
                 }
@@ -249,7 +256,7 @@ impl KuCoinClient {
                     return Self::unwrap_envelope(raw);
                 }
                 Err(e) if attempt < retries - 1 => {
-                    let wait = backoff.powi(attempt as i32 + 1);
+                    let wait = backoff.powi(attempt.cast_signed() + 1);
                     warn!(attempt, endpoint, error = %e, wait_secs = wait, "DELETE failed, retrying");
                     tokio::time::sleep(Duration::from_secs_f64(wait)).await;
                 }

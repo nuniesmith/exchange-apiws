@@ -9,10 +9,15 @@ use serde::{Deserialize, Serialize};
 pub struct Candle {
     /// Unix timestamp in **milliseconds**.
     pub time: i64,
+    /// Opening price for the period.
     pub open: f64,
+    /// Highest price during the period.
     pub high: f64,
+    /// Lowest price during the period.
     pub low: f64,
+    /// Closing price for the period.
     pub close: f64,
+    /// Total traded volume for the period.
     pub volume: f64,
 }
 
@@ -31,7 +36,7 @@ impl Candle {
             }
         };
         Some(Self {
-            time: arr.get(0)?.as_i64()?,
+            time: arr.first()?.as_i64()?,
             open: num(1)?,
             high: num(2)?,
             low: num(3)?,
@@ -47,12 +52,15 @@ impl Candle {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum Side {
+    /// Long / buy side.
     Buy,
+    /// Short / sell side.
     Sell,
 }
 
 impl Side {
-    pub fn as_str(self) -> &'static str {
+    /// Returns the lowercase string representation used by the KuCoin REST API.
+    pub const fn as_str(self) -> &'static str {
         match self {
             Self::Buy => "buy",
             Self::Sell => "sell",
@@ -60,7 +68,8 @@ impl Side {
     }
 
     /// The opposing side.
-    pub fn flip(self) -> Self {
+    #[must_use]
+    pub const fn flip(self) -> Self {
         match self {
             Self::Buy => Self::Sell,
             Self::Sell => Self::Buy,
@@ -80,12 +89,15 @@ impl std::fmt::Display for Side {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum OrderType {
+    /// Execute immediately at the current market price.
     Market,
+    /// Execute only at the specified limit price or better.
     Limit,
 }
 
 impl OrderType {
-    pub fn as_str(self) -> &'static str {
+    /// Returns the lowercase string representation used by the KuCoin REST API.
+    pub const fn as_str(self) -> &'static str {
         match self {
             Self::Market => "market",
             Self::Limit => "limit",
@@ -109,17 +121,13 @@ impl std::fmt::Display for OrderType {
 pub fn contract_value(symbol: &str) -> f64 {
     match symbol {
         // Inverse / coin-margined (1 USD per contract)
-        "XBTUSDM" => 1.0,
-        "ETHUSDM" => 1.0,
+        "XBTUSDM" | "ETHUSDM" => 1.0,
         // Linear / USDT-margined — base-coin multiplier
-        "XBTUSDTM" => 0.001,  // 0.001 BTC
-        "ETHUSDTM" => 0.01,   // 0.01 ETH
-        "SOLUSDTM" => 0.1,    // 0.1 SOL
-        "BNBUSDTM" => 0.01,   // 0.01 BNB
-        "XRPUSDTM" => 10.0,   // 10 XRP
+        "XBTUSDTM" => 0.001, // 0.001 BTC
+        "ETHUSDTM" | "BNBUSDTM" => 0.01,
+        "SOLUSDTM" | "AVAXUSDTM" => 0.1,
+        "XRPUSDTM" | "ADAUSDTM" => 10.0,
         "DOGEUSDTM" => 100.0, // 100 DOGE
-        "ADAUSDTM" => 10.0,
-        "AVAXUSDTM" => 0.1,
         "LINKUSDTM" => 1.0,
         _ => 1.0, // safe fallback — log a warning if used
     }
@@ -132,7 +140,7 @@ mod tests {
     #[test]
     fn candle_parse_string_fields() {
         let arr = serde_json::json!([
-            1713000000000i64,
+            1_713_000_000_000_i64,
             "86000.0",
             "87000.0",
             "85000.0",
@@ -141,7 +149,7 @@ mod tests {
         ]);
         let row = arr.as_array().unwrap();
         let c = Candle::from_raw(row).expect("should parse");
-        assert_eq!(c.time, 1713000000000);
+        assert_eq!(c.time, 1_713_000_000_000);
         assert!((c.open - 86000.0).abs() < 1e-9);
         assert!((c.close - 86500.0).abs() < 1e-9);
     }
@@ -158,10 +166,11 @@ mod tests {
 /// How long an order remains active before execution or expiry.
 ///
 /// See KuCoin docs: GTC is the safe default. Market orders do not support TIF.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "UPPERCASE")]
 pub enum TimeInForce {
     /// Good Till Canceled — expires only when explicitly canceled.
+    #[default]
     GTC,
     /// Good Till Time — expires at a caller-specified timestamp.
     GTT,
@@ -172,19 +181,14 @@ pub enum TimeInForce {
 }
 
 impl TimeInForce {
-    pub fn as_str(self) -> &'static str {
+    /// Returns the uppercase string representation used by the KuCoin REST API.
+    pub const fn as_str(self) -> &'static str {
         match self {
             Self::GTC => "GTC",
             Self::GTT => "GTT",
             Self::IOC => "IOC",
             Self::FOK => "FOK",
         }
-    }
-}
-
-impl Default for TimeInForce {
-    fn default() -> Self {
-        Self::GTC
     }
 }
 
@@ -215,7 +219,8 @@ pub enum STP {
 }
 
 impl STP {
-    pub fn as_str(self) -> &'static str {
+    /// Returns the uppercase string representation used by the KuCoin REST API.
+    pub const fn as_str(self) -> &'static str {
         match self {
             Self::DC => "DC",
             Self::CO => "CO",

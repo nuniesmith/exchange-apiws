@@ -38,32 +38,45 @@ pub struct WebSocketConfig {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum TradeSide {
+    /// Aggressive buy (taker lifted the ask).
     Buy,
+    /// Aggressive sell (taker hit the bid).
     Sell,
 }
 
 /// A single matched trade from the exchange.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct TradeData {
+    /// Instrument symbol (e.g. `"XBTUSDTM"`).
     pub symbol: String,
+    /// Exchange identifier (e.g. `"kucoin"`).
     pub exchange: String,
+    /// Whether the aggressor was a buyer or seller.
     pub side: TradeSide,
+    /// Matched price.
     pub price: f64,
+    /// Matched quantity (contracts or base units).
     pub amount: f64,
     /// Timestamp assigned by the exchange (milliseconds).
     pub exchange_ts: i64,
     /// Timestamp when this process received the message (milliseconds).
     pub receipt_ts: i64,
+    /// Exchange-assigned trade identifier.
     pub trade_id: String,
 }
 
 /// Best bid/ask and last-trade price from the exchange.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct TickerData {
+    /// Instrument symbol.
     pub symbol: String,
+    /// Exchange identifier.
     pub exchange: String,
+    /// Last traded price.
     pub price: f64,
+    /// Current best bid price.
     pub best_bid: f64,
+    /// Current best ask price.
     pub best_ask: f64,
     /// Timestamp assigned by the exchange (milliseconds).
     pub exchange_ts: i64,
@@ -78,7 +91,9 @@ pub struct TickerData {
 /// signals that the level should be removed from the local book.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct OrderBookData {
+    /// Instrument symbol.
     pub symbol: String,
+    /// Exchange identifier.
     pub exchange: String,
     /// Ask levels as `[price, qty]` pairs.
     pub asks: Vec<[f64; 2]>,
@@ -95,12 +110,18 @@ pub struct OrderBookData {
 /// Unified market data message emitted by any exchange connector.
 #[derive(Debug, Clone)]
 pub enum DataMessage {
+    /// A matched trade execution.
     Trade(TradeData),
+    /// A best-bid/ask ticker update.
     Ticker(TickerData),
+    /// An order book snapshot or incremental delta.
     OrderBook(OrderBookData),
     // Private-feed events — requires a private WS token.
+    /// A fill or status change on one of your orders.
     OrderUpdate(OrderUpdate),
+    /// A change to an open position.
     PositionChange(PositionChange),
+    /// A wallet or margin balance change.
     BalanceUpdate(BalanceUpdate),
 }
 
@@ -137,20 +158,29 @@ pub trait ExchangeConnector: Send + Sync {
 /// Emitted on `/contractMarket/tradeOrders` (Futures).
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct OrderUpdate {
+    /// Instrument symbol.
     pub symbol: String,
+    /// Exchange identifier.
     pub exchange: String,
+    /// Exchange-assigned order identifier.
     pub order_id: String,
+    /// Client-supplied order identifier, if provided at placement.
     pub client_oid: Option<String>,
+    /// Order side (buy or sell).
     pub side: TradeSide,
     /// `"market"` or `"limit"`.
     pub order_type: String,
     /// `"open"`, `"filled"`, `"canceled"`, or `"partialFilled"`.
     pub status: String,
+    /// Order limit price (0.0 for market orders).
     pub price: f64,
     /// Total order size in contracts.
     pub size: u32,
+    /// Number of contracts filled so far.
     pub filled_size: u32,
+    /// Number of contracts still open.
     pub remaining_size: u32,
+    /// Cumulative fee charged for fills so far.
     pub fee: f64,
     /// Exchange timestamp in milliseconds.
     pub exchange_ts: i64,
@@ -163,16 +193,23 @@ pub struct OrderUpdate {
 /// Emitted on `/contract/position:{symbol}` (Futures).
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PositionChange {
+    /// Instrument symbol.
     pub symbol: String,
+    /// Exchange identifier.
     pub exchange: String,
     /// Positive = long, negative = short, 0 = flat.
     pub current_qty: i32,
+    /// Volume-weighted average entry price.
     pub avg_entry_price: f64,
+    /// Current unrealised profit/loss in quote currency.
     pub unrealised_pnl: f64,
+    /// Cumulative realised profit/loss in quote currency.
     pub realised_pnl: f64,
     /// Why the position changed — e.g. `"positionChange"`, `"liquidation"`, `"funding"`.
     pub change_reason: String,
+    /// Exchange timestamp in milliseconds.
     pub exchange_ts: i64,
+    /// Local receipt timestamp in milliseconds.
     pub receipt_ts: i64,
 }
 
@@ -181,12 +218,18 @@ pub struct PositionChange {
 /// Emitted on `/contractAccount/wallet` (Futures).
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct BalanceUpdate {
+    /// Exchange identifier.
     pub exchange: String,
+    /// Settlement currency (e.g. `"USDT"` or `"XBT"`).
     pub currency: String,
+    /// Balance available for new orders or withdrawal.
     pub available_balance: f64,
+    /// Balance locked in open orders or positions.
     pub hold_balance: f64,
     /// Event tag from KuCoin — e.g. `"orderMargin.create"`, `"trade.settled"`.
     pub event: String,
+    /// Exchange timestamp in milliseconds.
     pub exchange_ts: i64,
+    /// Local receipt timestamp in milliseconds.
     pub receipt_ts: i64,
 }

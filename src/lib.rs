@@ -10,7 +10,7 @@
 //! use std::sync::Arc;
 //! use tokio::sync::{mpsc, watch};
 //! use exchange_apiws::{Credentials, KuCoinClient, KucoinEnv};
-//! use exchange_apiws::actors::DataMessage;
+//! use exchange_apiws::actors::{DataMessage, ExchangeConnector};
 //! use exchange_apiws::ws::{KucoinConnector, WsRunnerConfig, run_feed};
 //!
 //! #[tokio::main]

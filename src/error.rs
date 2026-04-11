@@ -5,35 +5,57 @@ use thiserror::Error;
 /// All errors that can be returned by `exchange-apiws`.
 #[derive(Debug, Error)]
 pub enum ExchangeError {
+    /// HTTP transport error from `reqwest`.
     #[error("HTTP error: {0}")]
     Http(#[from] reqwest::Error),
 
+    /// WebSocket transport error from `tungstenite` (boxed to reduce enum size).
     #[error("WebSocket error: {0}")]
-    WebSocket(#[from] tokio_tungstenite::tungstenite::Error),
+    WebSocket(Box<tokio_tungstenite::tungstenite::Error>),
 
+    /// JSON serialization or deserialization error.
     #[error("JSON error: {0}")]
     Json(#[from] serde_json::Error),
 
+    /// The exchange returned a non-success response code.
     #[error("Exchange API error — code: {code}, msg: {message}")]
-    Api { code: String, message: String },
+    Api {
+        /// KuCoin error code string (e.g. `"400100"`).
+        code: String,
+        /// Human-readable error message from the exchange.
+        message: String,
+    },
 
+    /// HMAC signing or credential validation failed.
     #[error("Authentication error: {0}")]
     Auth(String),
 
+    /// A required configuration value is missing or invalid.
     #[error("Config error: {0}")]
     Config(String),
 
+    /// An order-level error (e.g. trying to close a flat position).
     #[error("Order error: {0}")]
     Order(String),
 
+    /// WebSocket feed gave up after exhausting all reconnect attempts.
     #[error("WebSocket disconnected after max reconnect attempts")]
     WsDisconnected,
 
+    /// Not enough historical data to complete the requested operation.
     #[error("Insufficient data: {0}")]
     InsufficientData(String),
 
+    /// Catch-all for errors from third-party libraries via `anyhow`.
     #[error(transparent)]
     Other(#[from] anyhow::Error),
 }
 
+impl From<tokio_tungstenite::tungstenite::Error> for ExchangeError {
+    fn from(e: tokio_tungstenite::tungstenite::Error) -> Self {
+        Self::WebSocket(Box::new(e))
+    }
+}
+
+/// Shorthand `Result` type used throughout the crate.
 pub type Result<T> = std::result::Result<T, ExchangeError>;

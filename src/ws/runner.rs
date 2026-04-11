@@ -24,8 +24,8 @@
 //! use std::sync::Arc;
 //! use tokio::sync::{mpsc, watch};
 //! use exchange_apiws::{KuCoinClient, Credentials, KucoinEnv};
+//! use exchange_apiws::actors::{DataMessage, ExchangeConnector};
 //! use exchange_apiws::ws::{KucoinConnector, run_feed, WsRunnerConfig};
-//! use exchange_apiws::actors::DataMessage;
 //!
 //! #[tokio::main]
 //! async fn main() -> exchange_apiws::Result<()> {
@@ -92,7 +92,7 @@ impl Default for WsRunnerConfig {
 impl WsRunnerConfig {
     /// Build from the ping interval advertised by a KuCoin instance server.
     ///
-    /// Pass `connector.ping_interval_secs` after calling [`KucoinConnector::new`].
+    /// Pass `connector.ping_interval_secs` after calling [`crate::ws::KucoinConnector::new`].
     pub fn from_ping_interval(ping_interval_secs: u64) -> Self {
         Self {
             ping_interval_secs,
@@ -129,7 +129,7 @@ impl WsMsgGuard {
         while self
             .window
             .front()
-            .map_or(false, |t| now - *t > self.window_dur)
+            .is_some_and(|t| now - *t > self.window_dur)
         {
             self.window.pop_front();
         }

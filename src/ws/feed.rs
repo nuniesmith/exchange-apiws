@@ -5,7 +5,7 @@
 //! ## Public
 //!
 //! | Topic                                 | Env     | Emits                    |
-//! |---------------------------------------|---------|--------------------------|
+//! |---------------------------------------|---------|-----------------------------|
 //! | `/contractMarket/execution:{sym}`     | Futures | `DataMessage::Trade`     |
 //! | `/market/match:{sym}`                 | Spot    | `DataMessage::Trade`     |
 //! | `/contractMarket/tickerV2:{sym}`      | Futures | `DataMessage::Ticker`    |
@@ -96,7 +96,7 @@ impl KucoinConnector {
             KucoinEnv::LiveFutures => format!("/contractMarket/execution:{symbol}"),
             _ => format!("/market/match:{symbol}"),
         };
-        self.build_sub(topic, false)
+        Self::build_sub(topic, false)
     }
 
     /// Subscribe to best-bid/ask ticker updates for `symbol`.
@@ -108,7 +108,7 @@ impl KucoinConnector {
             KucoinEnv::LiveFutures => format!("/contractMarket/tickerV2:{symbol}"),
             _ => format!("/market/ticker:{symbol}"),
         };
-        self.build_sub(topic, false)
+        Self::build_sub(topic, false)
     }
 
     /// Subscribe to a full order book depth snapshot for `symbol`.
@@ -125,7 +125,7 @@ impl KucoinConnector {
             KucoinEnv::LiveFutures => format!("/contractMarket/level2Depth{d}:{symbol}"),
             _ => format!("/spotMarket/level2Depth{d}:{symbol}"),
         };
-        self.build_sub(topic, false)
+        Self::build_sub(topic, false)
     }
 
     /// Subscribe to full Level 2 incremental order book updates for `symbol`.
@@ -135,7 +135,7 @@ impl KucoinConnector {
     /// remove that price level from your local book.
     ///
     /// To bootstrap, fetch a REST snapshot via
-    /// [`get_orderbook_snapshot`][crate::rest::market::KuCoinClient::get_orderbook_snapshot],
+    /// [`get_orderbook_snapshot`][crate::client::KuCoinClient::get_orderbook_snapshot],
     /// then apply deltas with `sequence` greater than the snapshot's `sequence`.
     ///
     /// Futures: `/contractMarket/level2:{symbol}`
@@ -145,7 +145,7 @@ impl KucoinConnector {
             KucoinEnv::LiveFutures => format!("/contractMarket/level2:{symbol}"),
             _ => format!("/market/level2:{symbol}"),
         };
-        self.build_sub(topic, false)
+        Self::build_sub(topic, false)
     }
 
     // ── Private subscription builders ─────────────────────────────────────────
@@ -160,7 +160,7 @@ impl KucoinConnector {
     ///
     /// Topic: `/contractMarket/tradeOrders` (Futures)
     pub fn order_updates_subscription(&self) -> Option<String> {
-        self.build_sub("/contractMarket/tradeOrders".to_string(), true)
+        Self::build_sub("/contractMarket/tradeOrders".to_string(), true)
     }
 
     /// Subscribe to position changes for `symbol`.
@@ -172,7 +172,7 @@ impl KucoinConnector {
     ///
     /// Topic: `/contract/position:{symbol}` (Futures)
     pub fn position_subscription(&self, symbol: &str) -> Option<String> {
-        self.build_sub(format!("/contract/position:{symbol}"), true)
+        Self::build_sub(format!("/contract/position:{symbol}"), true)
     }
 
     /// Subscribe to wallet/balance updates.
@@ -184,12 +184,12 @@ impl KucoinConnector {
     ///
     /// Topic: `/contractAccount/wallet` (Futures)
     pub fn balance_subscription(&self) -> Option<String> {
-        self.build_sub("/contractAccount/wallet".to_string(), true)
+        Self::build_sub("/contractAccount/wallet".to_string(), true)
     }
 
     // ── Internal helpers ──────────────────────────────────────────────────────
 
-    fn build_sub(&self, topic: String, private_channel: bool) -> Option<String> {
+    fn build_sub(topic: String, private_channel: bool) -> Option<String> {
         let msg = WsMessage {
             id: Uuid::new_v4().to_string(),
             msg_type: "subscribe".to_string(),
@@ -206,7 +206,7 @@ impl KucoinConnector {
 // ── ExchangeConnector impl ────────────────────────────────────────────────────
 
 impl ExchangeConnector for KucoinConnector {
-    fn exchange_name(&self) -> &str {
+    fn exchange_name(&self) -> &'static str {
         "kucoin"
     }
 
@@ -236,38 +236,38 @@ impl ExchangeConnector for KucoinConnector {
         match msg.msg_type.as_str() {
             "message" => {
                 let topic = msg.topic.as_deref().unwrap_or("");
-                let data = match msg.data {
-                    Some(d) => d,
-                    None => return Ok(vec![]),
+                let Some(data) = msg.data else {
+                    return Ok(vec![]);
                 };
                 let symbol = extract_symbol(topic);
                 let exchange = self.exchange_name();
 
                 // Public topics — route by topic prefix.
                 if topic.contains("/contractMarket/execution") || topic.contains("/market/match") {
-                    parse_trade(symbol, exchange, &data)
+                    Ok(parse_trade(symbol, exchange, &data))
                 } else if topic.contains("/contractMarket/tickerV2")
                     || topic.contains("/contractMarket/ticker")
                     || topic.contains("/market/ticker")
                 {
-                    parse_ticker(symbol, exchange, &data)
+                    Ok(parse_ticker(symbol, exchange, &data))
                 } else if topic.contains("level2Depth") {
-                    parse_orderbook_depth(symbol, exchange, &data)
+                    Ok(parse_orderbook_depth(symbol, exchange, &data))
                 } else if topic.contains("level2") {
-                    parse_level2_delta(symbol, exchange, &data)
+                    Ok(parse_level2_delta(symbol, exchange, &data))
                 // Private topics
                 } else if topic.contains("/contractMarket/tradeOrders") {
-                    parse_order_update(exchange, &data)
+                    Ok(parse_order_update(exchange, &data))
                 } else if topic.contains("/contract/position") {
-                    parse_position_change(symbol, exchange, &data)
+                    Ok(parse_position_change(symbol, exchange, &data))
                 } else if topic.contains("/contractAccount/wallet") {
-                    parse_balance_update(exchange, &data)
+                    Ok(parse_balance_update(exchange, &data))
                 } else {
                     Ok(vec![])
                 }
             }
             // Protocol / control frames — the runner handles these.
-            "ping" | "pong" | "welcome" | "ack" | "error" => Ok(vec![]),
+            // All non-"message" types (ping, pong, welcome, ack, error, …)
+            // are silently ignored here.
             _ => Ok(vec![]),
         }
     }
@@ -277,7 +277,7 @@ impl ExchangeConnector for KucoinConnector {
 
 /// Extract the symbol from a KuCoin topic string (`/prefix:{symbol}`).
 fn extract_symbol(topic: &str) -> &str {
-    topic.split(':').last().unwrap_or("UNKNOWN")
+    topic.split(':').next_back().unwrap_or("UNKNOWN")
 }
 
 /// Parse a field that KuCoin may send as either a JSON string or a number.
@@ -318,7 +318,7 @@ fn first_f64(data: &Value, keys: &[&str]) -> f64 {
 
 // ── Public parsers ────────────────────────────────────────────────────────────
 
-fn parse_trade(symbol: &str, exchange: &str, data: &Value) -> Result<Vec<DataMessage>> {
+fn parse_trade(symbol: &str, exchange: &str, data: &Value) -> Vec<DataMessage> {
     let side = match data["side"].as_str().unwrap_or("buy") {
         s if s.eq_ignore_ascii_case("sell") => TradeSide::Sell,
         _ => TradeSide::Buy,
@@ -337,7 +337,7 @@ fn parse_trade(symbol: &str, exchange: &str, data: &Value) -> Result<Vec<DataMes
         .unwrap_or("")
         .to_string();
 
-    Ok(vec![DataMessage::Trade(TradeData {
+    vec![DataMessage::Trade(TradeData {
         symbol: symbol.to_string(),
         exchange: exchange.to_string(),
         side,
@@ -346,10 +346,10 @@ fn parse_trade(symbol: &str, exchange: &str, data: &Value) -> Result<Vec<DataMes
         exchange_ts,
         receipt_ts: chrono::Utc::now().timestamp_millis(),
         trade_id,
-    })])
+    })]
 }
 
-fn parse_ticker(symbol: &str, exchange: &str, data: &Value) -> Result<Vec<DataMessage>> {
+fn parse_ticker(symbol: &str, exchange: &str, data: &Value) -> Vec<DataMessage> {
     // Futures tickerV2: bestBidPrice / bestAskPrice; spot: bestBid / bestAsk.
     let best_bid = first_f64(data, &["bestBidPrice", "bestBid"]);
     let best_ask = first_f64(data, &["bestAskPrice", "bestAsk"]);
@@ -367,7 +367,7 @@ fn parse_ticker(symbol: &str, exchange: &str, data: &Value) -> Result<Vec<DataMe
         .or_else(|| data["time"].as_i64())
         .unwrap_or_else(|| chrono::Utc::now().timestamp_millis());
 
-    Ok(vec![DataMessage::Ticker(TickerData {
+    vec![DataMessage::Ticker(TickerData {
         symbol: symbol.to_string(),
         exchange: exchange.to_string(),
         price: str_f64(data, "price"),
@@ -375,10 +375,10 @@ fn parse_ticker(symbol: &str, exchange: &str, data: &Value) -> Result<Vec<DataMe
         best_ask,
         exchange_ts,
         receipt_ts: chrono::Utc::now().timestamp_millis(),
-    })])
+    })]
 }
 
-fn parse_orderbook_depth(symbol: &str, exchange: &str, data: &Value) -> Result<Vec<DataMessage>> {
+fn parse_orderbook_depth(symbol: &str, exchange: &str, data: &Value) -> Vec<DataMessage> {
     let parse_levels = |arr: &Value| -> Vec<[f64; 2]> {
         arr.as_array()
             .map(|rows| {
@@ -406,7 +406,7 @@ fn parse_orderbook_depth(symbol: &str, exchange: &str, data: &Value) -> Result<V
         .or_else(|| data["timestamp"].as_i64())
         .unwrap_or_else(|| chrono::Utc::now().timestamp_millis());
 
-    Ok(vec![DataMessage::OrderBook(OrderBookData {
+    vec![DataMessage::OrderBook(OrderBookData {
         symbol: symbol.to_string(),
         exchange: exchange.to_string(),
         asks: parse_levels(&data["asks"]),
@@ -414,10 +414,10 @@ fn parse_orderbook_depth(symbol: &str, exchange: &str, data: &Value) -> Result<V
         exchange_ts,
         receipt_ts: chrono::Utc::now().timestamp_millis(),
         is_snapshot: true,
-    })])
+    })]
 }
 
-fn parse_level2_delta(symbol: &str, exchange: &str, data: &Value) -> Result<Vec<DataMessage>> {
+fn parse_level2_delta(symbol: &str, exchange: &str, data: &Value) -> Vec<DataMessage> {
     // KuCoin level2 incremental format: `change: "price,side,qty"` where qty=0 → remove level.
     let change_str = data["change"].as_str().unwrap_or("");
     let mut parts = change_str.splitn(3, ',');
@@ -427,7 +427,7 @@ fn parse_level2_delta(symbol: &str, exchange: &str, data: &Value) -> Result<Vec<
     let qty: f64 = parts.next().and_then(|s| s.parse().ok()).unwrap_or(0.0);
 
     if price == 0.0 {
-        return Ok(vec![]);
+        return vec![];
     }
 
     let entry = [price, qty];
@@ -441,7 +441,7 @@ fn parse_level2_delta(symbol: &str, exchange: &str, data: &Value) -> Result<Vec<
         .as_i64()
         .unwrap_or_else(|| chrono::Utc::now().timestamp_millis());
 
-    Ok(vec![DataMessage::OrderBook(OrderBookData {
+    vec![DataMessage::OrderBook(OrderBookData {
         symbol: symbol.to_string(),
         exchange: exchange.to_string(),
         asks,
@@ -449,12 +449,12 @@ fn parse_level2_delta(symbol: &str, exchange: &str, data: &Value) -> Result<Vec<
         exchange_ts,
         receipt_ts: chrono::Utc::now().timestamp_millis(),
         is_snapshot: false,
-    })])
+    })]
 }
 
 // ── Private parsers ───────────────────────────────────────────────────────────
 
-fn parse_order_update(exchange: &str, data: &Value) -> Result<Vec<DataMessage>> {
+fn parse_order_update(exchange: &str, data: &Value) -> Vec<DataMessage> {
     let side = match data["side"].as_str().unwrap_or("buy") {
         s if s.eq_ignore_ascii_case("sell") => TradeSide::Sell,
         _ => TradeSide::Buy,
@@ -466,7 +466,7 @@ fn parse_order_update(exchange: &str, data: &Value) -> Result<Vec<DataMessage>> 
         .or_else(|| data["updatedAt"].as_i64())
         .unwrap_or_else(|| chrono::Utc::now().timestamp_millis());
 
-    Ok(vec![DataMessage::OrderUpdate(OrderUpdate {
+    vec![DataMessage::OrderUpdate(OrderUpdate {
         symbol: data["symbol"].as_str().unwrap_or("").to_string(),
         exchange: exchange.to_string(),
         order_id: data["orderId"].as_str().unwrap_or("").to_string(),
@@ -481,15 +481,15 @@ fn parse_order_update(exchange: &str, data: &Value) -> Result<Vec<DataMessage>> 
         fee: str_f64(data, "fee"),
         exchange_ts,
         receipt_ts: chrono::Utc::now().timestamp_millis(),
-    })])
+    })]
 }
 
-fn parse_position_change(symbol: &str, exchange: &str, data: &Value) -> Result<Vec<DataMessage>> {
+fn parse_position_change(symbol: &str, exchange: &str, data: &Value) -> Vec<DataMessage> {
     let exchange_ts = data["currentTimestamp"]
         .as_i64()
         .unwrap_or_else(|| chrono::Utc::now().timestamp_millis());
 
-    Ok(vec![DataMessage::PositionChange(PositionChange {
+    vec![DataMessage::PositionChange(PositionChange {
         symbol: symbol.to_string(),
         exchange: exchange.to_string(),
         current_qty: data["currentQty"].as_i64().unwrap_or(0) as i32,
@@ -502,15 +502,15 @@ fn parse_position_change(symbol: &str, exchange: &str, data: &Value) -> Result<V
             .to_string(),
         exchange_ts,
         receipt_ts: chrono::Utc::now().timestamp_millis(),
-    })])
+    })]
 }
 
-fn parse_balance_update(exchange: &str, data: &Value) -> Result<Vec<DataMessage>> {
+fn parse_balance_update(exchange: &str, data: &Value) -> Vec<DataMessage> {
     let exchange_ts = data["timestamp"]
         .as_i64()
         .unwrap_or_else(|| chrono::Utc::now().timestamp_millis());
 
-    Ok(vec![DataMessage::BalanceUpdate(BalanceUpdate {
+    vec![DataMessage::BalanceUpdate(BalanceUpdate {
         exchange: exchange.to_string(),
         currency: data["currency"].as_str().unwrap_or("").to_string(),
         available_balance: str_f64(data, "availableBalance"),
@@ -518,5 +518,5 @@ fn parse_balance_update(exchange: &str, data: &Value) -> Result<Vec<DataMessage>
         event: data["event"].as_str().unwrap_or("unknown").to_string(),
         exchange_ts,
         receipt_ts: chrono::Utc::now().timestamp_millis(),
-    })])
+    })]
 }

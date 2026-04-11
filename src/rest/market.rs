@@ -15,20 +15,30 @@ use crate::types::Candle;
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Ticker {
+    /// Instrument symbol.
     pub symbol: String,
+    /// Current best bid price.
     pub best_bid_price: Option<f64>,
+    /// Quantity available at the best bid.
     pub best_bid_size: Option<f64>,
+    /// Current best ask price.
     pub best_ask_price: Option<f64>,
+    /// Quantity available at the best ask.
     pub best_ask_size: Option<f64>,
+    /// Exchange timestamp in milliseconds.
     pub ts: Option<i64>,
 }
 
 /// Minimal order book snapshot (top-N levels).
 #[derive(Debug, Deserialize)]
 pub struct OrderBookSnapshot {
+    /// Exchange sequence number for ordering incremental updates.
     pub sequence: u64,
+    /// Ask price levels as `[price, qty]` pairs, ascending.
     pub asks: Vec<[f64; 2]>,
+    /// Bid price levels as `[price, qty]` pairs, descending.
     pub bids: Vec<[f64; 2]>,
+    /// Exchange timestamp in milliseconds.
     pub ts: Option<i64>,
 }
 
@@ -36,9 +46,13 @@ pub struct OrderBookSnapshot {
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct FundingRate {
+    /// Instrument symbol.
     pub symbol: String,
+    /// Funding interval in milliseconds (typically 28 800 000 = 8 h).
     pub granularity: Option<i64>,
+    /// Unix timestamp of the next funding settlement (milliseconds).
     pub time_point: Option<i64>,
+    /// Current funding rate (e.g. `0.0001` = 0.01 %).
     pub value: f64,
 }
 
@@ -46,10 +60,15 @@ pub struct FundingRate {
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct MarkPrice {
+    /// Instrument symbol.
     pub symbol: String,
+    /// Funding interval in milliseconds.
     pub granularity: Option<i64>,
+    /// Unix timestamp of this mark price snapshot (milliseconds).
     pub time_point: Option<i64>,
+    /// Current mark price.
     pub value: f64,
+    /// Underlying spot index price used to compute the mark price.
     pub index_price: Option<f64>,
 }
 
@@ -57,28 +76,51 @@ pub struct MarkPrice {
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ContractInfo {
+    /// Futures contract symbol (e.g. `"XBTUSDTM"`).
     pub symbol: String,
+    /// Underlying symbol (e.g. `"XBT"`).
     pub root_symbol: Option<String>,
+    /// `"FFWCSX"` for perpetual, `"FFICSX"` for quarterly.
     pub contract_type: Option<String>,
+    /// Unix timestamp when the contract first opened (milliseconds).
     pub first_open_date: Option<i64>,
+    /// Unix timestamp when the contract expires (milliseconds); `None` for perpetuals.
     pub expire_date: Option<i64>,
+    /// Unix timestamp of the settlement date (milliseconds).
     pub settle_date: Option<i64>,
+    /// Base asset of the contract (e.g. `"XBT"`).
     pub base_currency: Option<String>,
+    /// Quote currency (e.g. `"USDT"`).
     pub quote_currency: Option<String>,
+    /// Settlement currency (e.g. `"USDT"` for linear, `"XBT"` for inverse).
     pub settle_currency: Option<String>,
+    /// Maximum order quantity in contracts.
     pub max_order_qty: Option<u64>,
+    /// Minimum order quantity increment (lot size).
     pub lot_size: Option<u64>,
+    /// Minimum price movement (tick size).
     pub tick_size: Option<f64>,
+    /// Notional value per contract in the settlement currency.
     pub multiplier: Option<f64>,
+    /// Initial margin rate required to open a position.
     pub initial_margin: Option<f64>,
+    /// Maintenance margin rate below which liquidation is triggered.
     pub maint_margin_rate: Option<f64>,
+    /// Contract status — `"Open"` when trading is active.
     pub status: Option<String>,
+    /// Current 8-hour funding rate.
     pub funding_fee_rate: Option<f64>,
+    /// Predicted next 8-hour funding rate.
     pub predicted_funding_fee_rate: Option<f64>,
+    /// Total open interest across all traders (contracts as a string).
     pub open_interest: Option<String>,
+    /// 24-hour turnover in quote currency.
     pub turnover_of24h: Option<f64>,
+    /// 24-hour volume in contracts.
     pub volume_of24h: Option<f64>,
+    /// Current mark price.
     pub mark_price: Option<f64>,
+    /// Underlying index price used for mark price calculation.
     pub index_price_value: Option<f64>,
 }
 
@@ -96,12 +138,10 @@ impl KuCoinClient {
     ) -> Result<Vec<Candle>> {
         let gran_i = granularity.parse::<i64>().unwrap_or(1);
         let now_ms = chrono::Utc::now().timestamp_millis();
-        let from_ms = now_ms - gran_i * 60_000 * limit as i64;
-        let from_s = from_ms / 1000;
-        let to_s = now_ms / 1000;
-
-        let from = from_s.to_string();
-        let to = to_s.to_string();
+        let limit_i64 = i64::try_from(limit).unwrap_or(i64::MAX);
+        let from_ms = now_ms - gran_i * 60_000 * limit_i64;
+        let from = (from_ms / 1000).to_string();
+        let to = (now_ms / 1000).to_string();
 
         let raw: Vec<Vec<Value>> = self
             .get(
@@ -139,7 +179,8 @@ impl KuCoinClient {
         while all.len() < total {
             let remaining = total - all.len();
             let batch = remaining.min(page_size);
-            let window_ms = gran_i * 60_000 * batch as i64;
+            let batch_i64 = i64::try_from(batch).unwrap_or(i64::MAX);
+            let window_ms = gran_i * 60_000 * batch_i64;
             let window_start_ms = window_end_ms - window_ms;
 
             let from = (window_start_ms / 1000).to_string();
