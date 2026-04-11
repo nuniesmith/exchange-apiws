@@ -76,7 +76,7 @@ pub mod ws;
 
 pub use client::{Credentials, KuCoinClient, KucoinEnv};
 pub use error::{ExchangeError, Result};
-pub use types::{Candle, OrderType, Side, TimeInForce, STP};
+pub use types::{Candle, OrderType, STP, Side, TimeInForce};
 
 // ── WS convenience re-exports ─────────────────────────────────────────────────
 

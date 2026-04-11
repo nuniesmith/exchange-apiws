@@ -171,7 +171,8 @@ impl KuCoinClient {
     /// Cancel all open orders for a symbol.
     pub async fn cancel_all_orders(&self, symbol: &str) -> Result<serde_json::Value> {
         info!(symbol, "cancelling all open orders");
-        self.delete(&format!("/api/v1/orders?symbol={symbol}")).await
+        self.delete(&format!("/api/v1/orders?symbol={symbol}"))
+            .await
     }
 
     /// Fetch all active (open) orders for a symbol.
@@ -183,7 +184,10 @@ impl KuCoinClient {
             items: Vec<OrderDetail>,
         }
         let page: Page = self
-            .get("/api/v1/orders", &[("status", "active"), ("symbol", symbol)])
+            .get(
+                "/api/v1/orders",
+                &[("status", "active"), ("symbol", symbol)],
+            )
             .await?;
         Ok(page.items)
     }
@@ -255,6 +259,7 @@ impl KuCoinClient {
     /// Endpoint: `DELETE /api/v1/stopOrders?symbol={symbol}`
     pub async fn cancel_all_stop_orders(&self, symbol: &str) -> Result<serde_json::Value> {
         info!(symbol, "cancelling all stop orders");
-        self.delete(&format!("/api/v1/stopOrders?symbol={symbol}")).await
+        self.delete(&format!("/api/v1/stopOrders?symbol={symbol}"))
+            .await
     }
 }

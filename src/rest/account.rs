@@ -97,7 +97,10 @@ impl KuCoinClient {
         let overview: AccountOverview = self
             .get("/api/v1/account-overview", &[("currency", currency)])
             .await?;
-        debug!(balance = overview.available_balance, currency, "got balance");
+        debug!(
+            balance = overview.available_balance,
+            currency, "got balance"
+        );
         Ok(overview.available_balance)
     }
 

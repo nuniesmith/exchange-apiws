@@ -126,7 +126,11 @@ impl WsMsgGuard {
     async fn check(&mut self) {
         let now = Instant::now();
         // Drop timestamps older than the window.
-        while self.window.front().map_or(false, |t| now - *t > self.window_dur) {
+        while self
+            .window
+            .front()
+            .map_or(false, |t| now - *t > self.window_dur)
+        {
             self.window.pop_front();
         }
         if self.window.len() >= self.max_msgs {
@@ -201,7 +205,10 @@ pub async fn run_feed(
 
         match outcome {
             SessionOutcome::ShutdownRequested => {
-                info!(exchange = connector.exchange_name(), "WS feed shut down cleanly");
+                info!(
+                    exchange = connector.exchange_name(),
+                    "WS feed shut down cleanly"
+                );
                 return Ok(());
             }
             SessionOutcome::ReceiverDropped => {
@@ -262,7 +269,10 @@ async fn single_session(
         debug!(topic = ?sub, "subscribed");
     }
 
-    info!(exchange = connector.exchange_name(), "WS connected and subscribed");
+    info!(
+        exchange = connector.exchange_name(),
+        "WS connected and subscribed"
+    );
 
     let mut ping_tick = interval(Duration::from_secs(config.ping_interval_secs));
     ping_tick.tick().await; // discard the immediate first tick
