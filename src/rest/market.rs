@@ -140,8 +140,10 @@ impl KuCoinClient {
         let now_ms = chrono::Utc::now().timestamp_millis();
         let limit_i64 = i64::try_from(limit).unwrap_or(i64::MAX);
         let from_ms = now_ms - gran_i * 60_000 * limit_i64;
-        let from = (from_ms / 1000).to_string();
-        let to = (now_ms / 1000).to_string();
+
+        // KuCoin /api/v1/kline/query requires `from` and `to` in milliseconds.
+        let from = from_ms.to_string();
+        let to = now_ms.to_string();
 
         let raw: Vec<Vec<Value>> = self
             .get(
@@ -183,8 +185,9 @@ impl KuCoinClient {
             let window_ms = gran_i * 60_000 * batch_i64;
             let window_start_ms = window_end_ms - window_ms;
 
-            let from = (window_start_ms / 1000).to_string();
-            let to = (window_end_ms / 1000).to_string();
+            // KuCoin /api/v1/kline/query requires `from` and `to` in milliseconds.
+            let from = window_start_ms.to_string();
+            let to = window_end_ms.to_string();
 
             let raw: Vec<Vec<Value>> = self
                 .get(
@@ -216,56 +219,34 @@ impl KuCoinClient {
     }
 
     /// Fetch the Level 2 order book snapshot for `symbol`.
-    ///
-    /// Returns the full book. For a lightweight top-N book, use
-    /// [`orderbook_depth_subscription`][crate::ws::KucoinConnector::orderbook_depth_subscription]
-    /// over WebSocket instead.
-    ///
-    /// Endpoint: `GET /api/v1/level2/snapshot`
     pub async fn get_orderbook_snapshot(&self, symbol: &str) -> Result<OrderBookSnapshot> {
         self.get("/api/v1/level2/snapshot", &[("symbol", symbol)])
             .await
     }
 
     /// Fetch the current funding rate for a futures `symbol`.
-    ///
-    /// Endpoint: `GET /api/v1/funding-rate/{symbol}/current`
     pub async fn get_funding_rate(&self, symbol: &str) -> Result<FundingRate> {
         self.get(&format!("/api/v1/funding-rate/{symbol}/current"), &[])
             .await
     }
 
     /// Fetch the current mark price for a futures `symbol`.
-    ///
-    /// Endpoint: `GET /api/v1/mark-price/{symbol}/current`
     pub async fn get_mark_price(&self, symbol: &str) -> Result<MarkPrice> {
         self.get(&format!("/api/v1/mark-price/{symbol}/current"), &[])
             .await
     }
 
     /// Fetch all active futures contracts.
-    ///
-    /// Useful for discovering available symbols and their tick/lot sizes.
-    ///
-    /// Endpoint: `GET /api/v1/contracts/active`
     pub async fn get_active_contracts(&self) -> Result<Vec<ContractInfo>> {
         self.get("/api/v1/contracts/active", &[]).await
     }
 
     /// Fetch metadata for a single contract by symbol.
-    ///
-    /// Endpoint: `GET /api/v1/contracts/{symbol}`
     pub async fn get_contract(&self, symbol: &str) -> Result<ContractInfo> {
         self.get(&format!("/api/v1/contracts/{symbol}"), &[]).await
     }
 
     /// Fetch the best bid/ask ticker for a futures `symbol`.
-    ///
-    /// Returns the current best bid price/size, best ask price/size, and a
-    /// server timestamp. Fields are `Option` because they may be absent for
-    /// illiquid symbols.
-    ///
-    /// Endpoint: `GET /api/v1/ticker`
     pub async fn get_ticker(&self, symbol: &str) -> Result<Ticker> {
         self.get("/api/v1/ticker", &[("symbol", symbol)]).await
     }
