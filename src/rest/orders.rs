@@ -55,6 +55,24 @@ pub struct OrderDetail {
     pub updated_at: Option<i64>,
 }
 
+impl OrderDetail {
+    /// Returns `true` if the order is still resting on the book.
+    ///
+    /// KuCoin sets `status` to `"done"` once an order is fully filled,
+    /// cancelled, or expired. Any other value is treated as active.
+    pub fn is_active(&self) -> bool {
+        self.status == "active"
+    }
+
+    /// Returns `true` if the order is fully filled.
+    ///
+    /// An order is considered filled when its `filled_size` equals `size`
+    /// (all contracts matched) regardless of the `status` string.
+    pub fn is_filled(&self) -> bool {
+        self.filled_size.map_or(false, |f| f >= self.size)
+    }
+}
+
 /// Single trade fill from GET /api/v1/recentFills.
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -124,7 +142,10 @@ impl KuCoinClient {
     ///
     /// `leverage` is passed as a per-order field. `time_in_force` defaults to
     /// [`TimeInForce::GTC`] when `None`. Pass `stp` to enable Self-Trade Prevention.
-    #[allow(clippy::similar_names)] // `side` and `size` are the correct public API parameter names
+    ///
+    /// For **limit orders** `price` must be `Some(limit_price)`.  
+    /// For **market orders** `price` should be `None` (the field is omitted from the request body).
+    #[allow(clippy::similar_names, clippy::too_many_arguments)] // `side` and `size` are the correct public API parameter names
     pub async fn place_order(
         &self,
         symbol: &str,
@@ -132,10 +153,18 @@ impl KuCoinClient {
         size: u32,
         leverage: u32,
         order_type: OrderType,
+        price: Option<f64>,
         time_in_force: Option<TimeInForce>,
         reduce_only: bool,
         stp: Option<STP>,
     ) -> Result<OrderResponse> {
+        // Validate: KuCoin will reject a limit order without a price.
+        if order_type == OrderType::Limit && price.is_none() {
+            return Err(ExchangeError::Order(
+                "place_order: price is required for limit orders".into(),
+            ));
+        }
+
         let tif = time_in_force.unwrap_or_default().as_str();
         let mut body = json!({
             "clientOid":   Uuid::new_v4().to_string(),
@@ -147,12 +176,16 @@ impl KuCoinClient {
             "timeInForce": tif,
             "reduceOnly":  reduce_only,
         });
+        if let Some(p) = price {
+            body["price"] = json!(p.to_string());
+        }
         if let Some(s) = stp {
             body["stp"] = json!(s.as_str());
         }
         info!(
             symbol, side = ?side, size, leverage,
             order_type = order_type.as_str(), tif, reduce_only,
+            price = ?price,
             "placing order"
         );
         self.post("/api/v1/orders", &body).await

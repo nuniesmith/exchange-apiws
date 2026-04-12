@@ -152,6 +152,8 @@ impl KuCoinClient {
         let endpoint = format!("{path}{qs}");
         let url = format!("{}{}", self.base_url, endpoint);
 
+        let mut last_err: Option<ExchangeError> = None;
+
         for attempt in 0..retries {
             let headers = build_headers(
                 &self.creds.key,
@@ -165,8 +167,15 @@ impl KuCoinClient {
             match self.http.get(&url).headers(headers).send().await {
                 Ok(resp) => {
                     if let Some(wait) = Self::check_rate_limit(&resp) {
+                        warn!(attempt, path, wait_ms = wait.as_millis(), "GET rate-limited — waiting before retry");
                         tokio::time::sleep(wait).await;
-                        continue; // Retry after sleeping
+                        // Rate-limit waits don't count against the backoff attempt budget;
+                        // re-use the same `attempt` index on the next iteration.
+                        last_err = Some(ExchangeError::Api {
+                            code: "429".into(),
+                            message: "rate limited".into(),
+                        });
+                        continue;
                     }
                     let raw: Value = resp.json().await?;
                     return Self::unwrap_envelope(raw);
@@ -175,11 +184,16 @@ impl KuCoinClient {
                     let wait = backoff.powi(attempt.cast_signed() + 1);
                     warn!(attempt, path, error = %e, wait_secs = wait, "GET failed, retrying");
                     tokio::time::sleep(Duration::from_secs_f64(wait)).await;
+                    last_err = Some(ExchangeError::Http(e));
                 }
                 Err(e) => return Err(ExchangeError::Http(e)),
             }
         }
-        unreachable!()
+
+        Err(last_err.unwrap_or_else(|| ExchangeError::Api {
+            code: "retry_exhausted".into(),
+            message: format!("GET {path} failed after {retries} attempts"),
+        }))
     }
 
     async fn post_with_retries<T: DeserializeOwned>(
@@ -190,6 +204,8 @@ impl KuCoinClient {
         backoff: f64,
     ) -> Result<T> {
         let body_str = serde_json::to_string(body)?;
+
+        let mut last_err: Option<ExchangeError> = None;
 
         for attempt in 0..retries {
             let headers = build_headers(
@@ -211,7 +227,12 @@ impl KuCoinClient {
             {
                 Ok(resp) => {
                     if let Some(wait) = Self::check_rate_limit(&resp) {
+                        warn!(attempt, path, wait_ms = wait.as_millis(), "POST rate-limited — waiting before retry");
                         tokio::time::sleep(wait).await;
+                        last_err = Some(ExchangeError::Api {
+                            code: "429".into(),
+                            message: "rate limited".into(),
+                        });
                         continue;
                     }
                     let raw: Value = resp.json().await?;
@@ -221,11 +242,16 @@ impl KuCoinClient {
                     let wait = backoff.powi(attempt.cast_signed() + 1);
                     warn!(attempt, path, error = %e, wait_secs = wait, "POST failed, retrying");
                     tokio::time::sleep(Duration::from_secs_f64(wait)).await;
+                    last_err = Some(ExchangeError::Http(e));
                 }
                 Err(e) => return Err(ExchangeError::Http(e)),
             }
         }
-        unreachable!()
+
+        Err(last_err.unwrap_or_else(|| ExchangeError::Api {
+            code: "retry_exhausted".into(),
+            message: format!("POST {path} failed after {retries} attempts"),
+        }))
     }
 
     async fn delete_with_retries<T: DeserializeOwned>(
@@ -235,6 +261,8 @@ impl KuCoinClient {
         backoff: f64,
     ) -> Result<T> {
         let url = format!("{}{}", self.base_url, endpoint);
+
+        let mut last_err: Option<ExchangeError> = None;
 
         for attempt in 0..retries {
             let headers = build_headers(
@@ -249,7 +277,12 @@ impl KuCoinClient {
             match self.http.delete(&url).headers(headers).send().await {
                 Ok(resp) => {
                     if let Some(wait) = Self::check_rate_limit(&resp) {
+                        warn!(attempt, endpoint, wait_ms = wait.as_millis(), "DELETE rate-limited — waiting before retry");
                         tokio::time::sleep(wait).await;
+                        last_err = Some(ExchangeError::Api {
+                            code: "429".into(),
+                            message: "rate limited".into(),
+                        });
                         continue;
                     }
                     let raw: Value = resp.json().await?;
@@ -259,11 +292,16 @@ impl KuCoinClient {
                     let wait = backoff.powi(attempt.cast_signed() + 1);
                     warn!(attempt, endpoint, error = %e, wait_secs = wait, "DELETE failed, retrying");
                     tokio::time::sleep(Duration::from_secs_f64(wait)).await;
+                    last_err = Some(ExchangeError::Http(e));
                 }
                 Err(e) => return Err(ExchangeError::Http(e)),
             }
         }
-        unreachable!()
+
+        Err(last_err.unwrap_or_else(|| ExchangeError::Api {
+            code: "retry_exhausted".into(),
+            message: format!("DELETE {endpoint} failed after {retries} attempts"),
+        }))
     }
 
     /// Checks for a 429 Too Many Requests response and reads the reset timer header.

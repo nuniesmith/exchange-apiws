@@ -157,6 +157,12 @@ impl WsMsgGuard {
 /// Subscribes to all topics in `subscriptions` on connect, forwards parsed
 /// [`DataMessage`]s to `tx`, and reconnects automatically on any disconnect.
 ///
+/// The reconnect attempt counter resets to zero whenever a session ran
+/// successfully for at least [`STABLE_SESSION_SECS`] seconds. This means
+/// a stable connection that eventually drops is treated the same as a fresh
+/// start — it won't exhaust the attempt budget just from normal daily
+/// reconnects.
+///
 /// # Arguments
 /// - `ws_url`        — Full WSS URL with token query params.
 /// - `subscriptions` — JSON subscription messages (build with the connector's helpers).
@@ -176,6 +182,12 @@ pub async fn run_feed(
     config: WsRunnerConfig,
     mut shutdown: watch::Receiver<bool>,
 ) -> Result<()> {
+    /// A session that ran at least this long is considered stable.
+    /// After a stable session the attempt counter resets so normal
+    /// daily reconnects (token expiry, rolling restarts, etc.) don't
+    /// burn the retry budget.
+    const STABLE_SESSION_SECS: u64 = 60;
+
     let url = ws_url.into();
     let mut attempts: u32 = 0;
 
@@ -193,6 +205,7 @@ pub async fn run_feed(
             tokio::time::sleep(Duration::from_secs(delay)).await;
         }
 
+        let session_start = Instant::now();
         let outcome = single_session(
             &url,
             &subscriptions,
@@ -216,14 +229,27 @@ pub async fn run_feed(
                 return Ok(());
             }
             SessionOutcome::Disconnected => {
-                attempts += 1;
-                if attempts > config.max_reconnect_attempts {
-                    error!(
-                        max = config.max_reconnect_attempts,
+                // If the session was stable for long enough, treat this as
+                // a fresh start rather than a retry.  Normal causes: token
+                // expiry (KuCoin tokens last ~24 h), rolling server restart,
+                // or a clean network handoff.
+                if session_start.elapsed().as_secs() >= STABLE_SESSION_SECS {
+                    info!(
                         exchange = connector.exchange_name(),
-                        "WS max reconnect attempts exhausted"
+                        uptime_secs = session_start.elapsed().as_secs(),
+                        "WS stable session ended — resetting reconnect counter",
                     );
-                    return Err(ExchangeError::WsDisconnected);
+                    attempts = 0;
+                } else {
+                    attempts += 1;
+                    if attempts > config.max_reconnect_attempts {
+                        error!(
+                            max = config.max_reconnect_attempts,
+                            exchange = connector.exchange_name(),
+                            "WS max reconnect attempts exhausted"
+                        );
+                        return Err(ExchangeError::WsDisconnected);
+                    }
                 }
             }
         }
