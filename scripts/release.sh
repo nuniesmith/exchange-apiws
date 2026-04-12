@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# release.sh — bump patch version, commit, tag, push, and publish
+# release.sh — bump patch version, commit, tag, push, then publish
 # Usage: ./release.sh [--dry-run]
 set -euo pipefail
 
@@ -24,12 +24,10 @@ if [[ -n "$(git status --porcelain)" ]]; then
 fi
 
 # ── 2. Determine the next version ─────────────────────────────────────────────
-# Get the latest semver tag; fall back to v0.0.0 if none exists.
 LATEST_TAG=$(git tag --list 'v*.*.*' --sort=-version:refname | head -n1)
 LATEST_TAG="${LATEST_TAG:-v0.0.0}"
 echo "==> Latest tag: $LATEST_TAG"
 
-# Strip leading 'v' and split into parts.
 VERSION="${LATEST_TAG#v}"
 MAJOR="${VERSION%%.*}"
 REST="${VERSION#*.}"
@@ -48,7 +46,6 @@ if [[ ! -f "$CARGO" ]]; then
     exit 1
 fi
 
-# Replace the version line (matches `version = "x.y.z"` with any spacing).
 CURRENT_CARGO_VERSION=$(grep -E '^version\s*=' "$CARGO" | head -n1 | grep -oE '[0-9]+\.[0-9]+\.[0-9]+')
 echo "==> Cargo.toml version: $CURRENT_CARGO_VERSION -> $NEW_VERSION"
 
@@ -56,21 +53,18 @@ if ! $DRY_RUN; then
     sed -i "0,/^\(version\s*=\s*\)\"[^\"]*\"/s//\1\"${NEW_VERSION}\"/" "$CARGO"
 fi
 
-# ── 4. Update Cargo.lock ──────────────────────────────────────────────────────
-run cargo generate-lockfile --quiet 2>/dev/null || run cargo update --workspace --quiet 2>/dev/null || true
-
-# ── 5. Commit and tag ─────────────────────────────────────────────────────────
-run git add Cargo.toml Cargo.lock
+# ── 4. Commit and tag (Cargo.lock intentionally excluded if gitignored) ───────
+run git add Cargo.toml
 run git commit -m "chore: bump version to ${NEW_VERSION}"
 run git tag -a "$NEW_TAG" -m "Release ${NEW_TAG}"
 
-# ── 6. Push ───────────────────────────────────────────────────────────────────
+# ── 5. Push commit and tag before publishing ──────────────────────────────────
 BRANCH=$(git rev-parse --abbrev-ref HEAD)
 echo "==> Pushing branch '$BRANCH' and tag '$NEW_TAG'"
 run git push origin "$BRANCH"
 run git push origin "$NEW_TAG"
 
-# ── 7. Publish ────────────────────────────────────────────────────────────────
+# ── 6. Publish ────────────────────────────────────────────────────────────────
 echo "==> Publishing to crates.io"
 run cargo publish
 
