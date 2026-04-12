@@ -6,16 +6,19 @@
 //! or base URL to use. Environment routing lives in [`crate::connectors`].
 //!
 //! - Signs every request via [`crate::auth::build_headers`]
-//! - Retries on transient failures with configurable backoff
-//! - Auto-pauses on HTTP 429 (Rate Limit) using KuCoin's reset headers
+//! - Retries on transient failures with jittered exponential backoff
+//! - Auto-pauses on HTTP 429 (Rate Limit) using KuCoin's reset headers,
+//!   with a cap of [`MAX_RATE_LIMIT_RETRIES`] to prevent infinite loops
 //! - Unwraps KuCoin's `{"code":"200000","data":{...}}` envelope
+//! - Percent-encodes all query parameter values before signing
 
 use std::time::Duration;
 
-use reqwest::{Client, StatusCode};
+use reqwest::{Client, RequestBuilder, StatusCode};
 use serde::de::DeserializeOwned;
 use serde_json::Value;
 use tracing::warn;
+use zeroize::ZeroizeOnDrop;
 
 use crate::auth::build_headers;
 use crate::error::{ExchangeError, Result};
@@ -23,7 +26,11 @@ use crate::error::{ExchangeError, Result};
 // ── Credentials ───────────────────────────────────────────────────────────────
 
 /// API credentials loaded from environment or passed directly.
-#[derive(Clone)]
+///
+/// Implements [`ZeroizeOnDrop`]: the key material is zeroed out in memory
+/// when this struct is dropped, preventing secrets from lingering in heap
+/// dumps or core files.
+#[derive(Clone, ZeroizeOnDrop)]
 pub struct Credentials {
     /// KuCoin API key.
     pub key: String,
@@ -57,6 +64,14 @@ impl Credentials {
     }
 
     /// Sim-mode placeholder — never reaches the exchange.
+    ///
+    /// # ⚠️ Development only
+    ///
+    /// These credentials are hardcoded and will be rejected by any live
+    /// exchange endpoint. Use [`Credentials::from_env`] or
+    /// [`Credentials::new`] for real trading. Gate sim-mode behind a
+    /// runtime flag or feature flag; never ship this to production.
+    #[cfg(any(test, feature = "testutils"))]
     pub fn sim() -> Self {
         Self::new("sim_key", "sim_secret", "sim_pass")
     }
@@ -65,6 +80,74 @@ impl Credentials {
 fn env(key: &str) -> Result<String> {
     std::env::var(key).map_err(|_| ExchangeError::Config(format!("{key} not set")))
 }
+
+// ── Query string helpers ──────────────────────────────────────────────────────
+
+/// Percent-encode a single query parameter value.
+///
+/// Only unreserved characters (`A–Z`, `a–z`, `0–9`, `-`, `_`, `.`, `~`) are
+/// left unencoded. Everything else is percent-encoded as `%XX`. This matches
+/// RFC 3986 §2.3 and is safe for use in both the URL and the HMAC pre-hash.
+fn percent_encode(s: &str) -> String {
+    let mut out = String::with_capacity(s.len());
+    for byte in s.bytes() {
+        match byte {
+            b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'-' | b'_' | b'.' | b'~' => {
+                out.push(byte as char);
+            }
+            b => {
+                out.push('%');
+                out.push(char::from_digit(u32::from(b) >> 4, 16).unwrap().to_ascii_uppercase());
+                out.push(char::from_digit(u32::from(b) & 0xF, 16).unwrap().to_ascii_uppercase());
+            }
+        }
+    }
+    out
+}
+
+/// Build a percent-encoded query string from key-value pairs.
+///
+/// Returns an empty string when `params` is empty, otherwise
+/// `"?key=value&key2=value2"` with all values percent-encoded.
+fn build_query_string(params: &[(&str, &str)]) -> String {
+    if params.is_empty() {
+        return String::new();
+    }
+    let pairs: Vec<String> = params
+        .iter()
+        .map(|(k, v)| format!("{}={}", percent_encode(k), percent_encode(v)))
+        .collect();
+    format!("?{}", pairs.join("&"))
+}
+
+// ── Jitter ────────────────────────────────────────────────────────────────────
+
+/// Return a ±25 % jitter factor for `base_secs`.
+///
+/// Uses sub-second system time as a cheap entropy source — no `rand`
+/// dependency needed. The distribution isn't perfectly uniform, but it's
+/// sufficient to spread out concurrent retry bursts.
+fn jitter_secs(base: f64) -> f64 {
+    let nanos = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap_or_default()
+        .subsec_nanos();
+    // Map [0, 1_000_000_000) → [-0.25, +0.25)
+    let factor = (nanos as f64 / 1_000_000_000.0 - 0.5) * 0.5;
+    base * factor
+}
+
+// ── Retry constants ───────────────────────────────────────────────────────────
+
+/// Default number of HTTP retry attempts for transient failures.
+const DEFAULT_RETRIES: u32 = 3;
+
+/// Default exponential backoff base (seconds).
+const DEFAULT_BACKOFF: f64 = 1.5;
+
+/// Maximum number of consecutive 429 rate-limit sleeps per call before giving
+/// up. This prevents an infinite loop if the exchange keeps returning 429.
+const MAX_RATE_LIMIT_RETRIES: u32 = 5;
 
 // ── Client ────────────────────────────────────────────────────────────────────
 
@@ -78,211 +161,178 @@ pub struct KuCoinClient {
 
 impl KuCoinClient {
     /// Create a client with an explicit base URL (useful for testing/proxies).
-    pub fn with_base_url(creds: Credentials, base_url: impl Into<String>) -> Self {
+    ///
+    /// # Errors
+    /// Returns [`ExchangeError::Config`] if the underlying `reqwest` HTTP
+    /// client cannot be built (e.g. TLS initialisation failure).
+    pub fn with_base_url(creds: Credentials, base_url: impl Into<String>) -> Result<Self> {
         let http = Client::builder()
             .timeout(Duration::from_secs(10))
             .build()
-            .expect("failed to build reqwest client");
-        Self {
+            .map_err(|e| ExchangeError::Config(format!("failed to build HTTP client: {e}")))?;
+        Ok(Self {
             http,
             creds,
             base_url: base_url.into(),
-        }
+        })
     }
 
     // ── Public API ────────────────────────────────────────────────────────────
 
-    /// Authenticated GET with retry.
+    /// Authenticated GET with jittered exponential-backoff retry.
     ///
-    /// `params` are appended as a query string.
+    /// `params` are percent-encoded and appended as a query string. The
+    /// encoded query string is included in the HMAC pre-hash so the signature
+    /// matches what the server receives.
     pub async fn get<T: DeserializeOwned>(&self, path: &str, params: &[(&str, &str)]) -> Result<T> {
-        self.get_with_retries(path, params, 3, 1.5).await
+        let qs = build_query_string(params);
+        let endpoint = format!("{path}{qs}");
+        let url = format!("{}{endpoint}", self.base_url);
+        self.execute_with_retries("GET", &endpoint, &url, None, DEFAULT_RETRIES, DEFAULT_BACKOFF)
+            .await
     }
 
-    /// Authenticated POST with retry.
+    /// Authenticated POST with jittered exponential-backoff retry.
     pub async fn post<T: DeserializeOwned>(&self, path: &str, body: &Value) -> Result<T> {
-        self.post_with_retries(path, body, 3, 1.5).await
+        let body_str = serde_json::to_string(body)?;
+        let url = format!("{}{path}", self.base_url);
+        self.execute_with_retries(
+            "POST",
+            path,
+            &url,
+            Some(&body_str),
+            DEFAULT_RETRIES,
+            DEFAULT_BACKOFF,
+        )
+        .await
     }
 
-    /// Authenticated DELETE with retry (used for cancellations).
+    /// Authenticated DELETE with jittered exponential-backoff retry.
     ///
     /// The `endpoint` should include any necessary query strings (e.g., `?symbol=XBTUSDTM`).
     pub async fn delete<T: DeserializeOwned>(&self, endpoint: &str) -> Result<T> {
-        self.delete_with_retries(endpoint, 3, 1.5).await
+        let url = format!("{}{endpoint}", self.base_url);
+        self.execute_with_retries(
+            "DELETE",
+            endpoint,
+            &url,
+            None,
+            DEFAULT_RETRIES,
+            DEFAULT_BACKOFF,
+        )
+        .await
+    }
+
+    /// Authenticated PUT with jittered exponential-backoff retry.
+    pub async fn put<T: DeserializeOwned>(&self, path: &str, body: &Value) -> Result<T> {
+        let body_str = serde_json::to_string(body)?;
+        let url = format!("{}{path}", self.base_url);
+        self.execute_with_retries(
+            "PUT",
+            path,
+            &url,
+            Some(&body_str),
+            DEFAULT_RETRIES,
+            DEFAULT_BACKOFF,
+        )
+        .await
     }
 
     // ── Internal ──────────────────────────────────────────────────────────────
 
-    async fn get_with_retries<T: DeserializeOwned>(
+    /// Unified retry loop for all HTTP verbs.
+    ///
+    /// - `verb`     — `"GET"`, `"POST"`, `"DELETE"`, or `"PUT"`.
+    /// - `endpoint` — path + query string (used for HMAC signing and logging).
+    /// - `url`      — full URL sent to `reqwest`.
+    /// - `body`     — `Some(json_str)` for POST/PUT, `None` for GET/DELETE.
+    ///
+    /// Transient network errors are retried up to `retries` times with
+    /// jittered exponential backoff. HTTP 429 responses trigger a sleep based
+    /// on the `gw-ratelimit-reset` header and do **not** consume a retry slot,
+    /// but are capped at [`MAX_RATE_LIMIT_RETRIES`] to avoid infinite loops.
+    async fn execute_with_retries<T: DeserializeOwned>(
         &self,
-        path: &str,
-        params: &[(&str, &str)],
-        retries: u32,
-        backoff: f64,
-    ) -> Result<T> {
-        let qs = if params.is_empty() {
-            String::new()
-        } else {
-            let pairs: Vec<String> = params.iter().map(|(k, v)| format!("{k}={v}")).collect();
-            format!("?{}", pairs.join("&"))
-        };
-        let endpoint = format!("{path}{qs}");
-        let url = format!("{}{}", self.base_url, endpoint);
-
-        let mut last_err: Option<ExchangeError> = None;
-
-        for attempt in 0..retries {
-            let headers = build_headers(
-                &self.creds.key,
-                &self.creds.secret,
-                &self.creds.passphrase,
-                "GET",
-                &endpoint,
-                "",
-            );
-
-            match self.http.get(&url).headers(headers).send().await {
-                Ok(resp) => {
-                    if let Some(wait) = Self::check_rate_limit(&resp) {
-                        warn!(
-                            attempt,
-                            path,
-                            wait_ms = wait.as_millis(),
-                            "GET rate-limited — waiting before retry"
-                        );
-                        tokio::time::sleep(wait).await;
-                        // Rate-limit waits don't count against the backoff attempt budget;
-                        // re-use the same `attempt` index on the next iteration.
-                        last_err = Some(ExchangeError::Api {
-                            code: "429".into(),
-                            message: "rate limited".into(),
-                        });
-                        continue;
-                    }
-                    let raw: Value = resp.json().await?;
-                    return Self::unwrap_envelope(raw);
-                }
-                Err(e) if attempt < retries - 1 => {
-                    let wait = backoff.powi(attempt.cast_signed() + 1);
-                    warn!(attempt, path, error = %e, wait_secs = wait, "GET failed, retrying");
-                    tokio::time::sleep(Duration::from_secs_f64(wait)).await;
-                    last_err = Some(ExchangeError::Http(e));
-                }
-                Err(e) => return Err(ExchangeError::Http(e)),
-            }
-        }
-
-        Err(last_err.unwrap_or_else(|| ExchangeError::Api {
-            code: "retry_exhausted".into(),
-            message: format!("GET {path} failed after {retries} attempts"),
-        }))
-    }
-
-    async fn post_with_retries<T: DeserializeOwned>(
-        &self,
-        path: &str,
-        body: &Value,
-        retries: u32,
-        backoff: f64,
-    ) -> Result<T> {
-        let body_str = serde_json::to_string(body)?;
-
-        let mut last_err: Option<ExchangeError> = None;
-
-        for attempt in 0..retries {
-            let headers = build_headers(
-                &self.creds.key,
-                &self.creds.secret,
-                &self.creds.passphrase,
-                "POST",
-                path,
-                &body_str,
-            );
-
-            match self
-                .http
-                .post(format!("{}{path}", self.base_url))
-                .headers(headers)
-                .body(body_str.clone())
-                .send()
-                .await
-            {
-                Ok(resp) => {
-                    if let Some(wait) = Self::check_rate_limit(&resp) {
-                        warn!(
-                            attempt,
-                            path,
-                            wait_ms = wait.as_millis(),
-                            "POST rate-limited — waiting before retry"
-                        );
-                        tokio::time::sleep(wait).await;
-                        last_err = Some(ExchangeError::Api {
-                            code: "429".into(),
-                            message: "rate limited".into(),
-                        });
-                        continue;
-                    }
-                    let raw: Value = resp.json().await?;
-                    return Self::unwrap_envelope(raw);
-                }
-                Err(e) if attempt < retries - 1 => {
-                    let wait = backoff.powi(attempt.cast_signed() + 1);
-                    warn!(attempt, path, error = %e, wait_secs = wait, "POST failed, retrying");
-                    tokio::time::sleep(Duration::from_secs_f64(wait)).await;
-                    last_err = Some(ExchangeError::Http(e));
-                }
-                Err(e) => return Err(ExchangeError::Http(e)),
-            }
-        }
-
-        Err(last_err.unwrap_or_else(|| ExchangeError::Api {
-            code: "retry_exhausted".into(),
-            message: format!("POST {path} failed after {retries} attempts"),
-        }))
-    }
-
-    async fn delete_with_retries<T: DeserializeOwned>(
-        &self,
+        verb: &str,
         endpoint: &str,
+        url: &str,
+        body: Option<&str>,
         retries: u32,
         backoff: f64,
     ) -> Result<T> {
-        let url = format!("{}{}", self.base_url, endpoint);
-
+        let body_str = body.unwrap_or("");
         let mut last_err: Option<ExchangeError> = None;
+        let mut rate_limit_hits: u32 = 0;
 
         for attempt in 0..retries {
             let headers = build_headers(
                 &self.creds.key,
                 &self.creds.secret,
                 &self.creds.passphrase,
-                "DELETE",
+                verb,
                 endpoint,
-                "",
-            );
+                body_str,
+            )?;
 
-            match self.http.delete(&url).headers(headers).send().await {
+            // Build the request for this verb. `RequestBuilder` is consumed by
+            // `.send()`, so we reconstruct it on each retry.
+            let mut req: RequestBuilder = match verb {
+                "GET" => self.http.get(url),
+                "POST" => self.http.post(url),
+                "DELETE" => self.http.delete(url),
+                "PUT" => self.http.put(url),
+                other => {
+                    return Err(ExchangeError::Config(format!(
+                        "unsupported HTTP verb: {other}"
+                    )))
+                }
+            };
+            req = req.headers(headers);
+            if !body_str.is_empty() {
+                req = req.body(body_str.to_owned());
+            }
+
+            match req.send().await {
                 Ok(resp) => {
                     if let Some(wait) = Self::check_rate_limit(&resp) {
+                        rate_limit_hits += 1;
+                        if rate_limit_hits > MAX_RATE_LIMIT_RETRIES {
+                            return Err(ExchangeError::Api {
+                                code: "429".into(),
+                                message: format!(
+                                    "{verb} {endpoint} was rate-limited \
+                                     {MAX_RATE_LIMIT_RETRIES} times; giving up"
+                                ),
+                            });
+                        }
                         warn!(
                             attempt,
                             endpoint,
                             wait_ms = wait.as_millis(),
-                            "DELETE rate-limited — waiting before retry"
+                            rate_limit_hits,
+                            "{verb} rate-limited — waiting before retry"
                         );
                         tokio::time::sleep(wait).await;
                         last_err = Some(ExchangeError::Api {
                             code: "429".into(),
                             message: "rate limited".into(),
                         });
+                        // Rate-limit sleeps do not consume the retry budget.
                         continue;
                     }
                     let raw: Value = resp.json().await?;
                     return Self::unwrap_envelope(raw);
                 }
                 Err(e) if attempt < retries - 1 => {
-                    let wait = backoff.powi(attempt.cast_signed() + 1);
-                    warn!(attempt, endpoint, error = %e, wait_secs = wait, "DELETE failed, retrying");
+                    let base = backoff.powi(attempt.cast_signed() + 1);
+                    let wait = (base + jitter_secs(base)).max(0.1);
+                    warn!(
+                        attempt,
+                        endpoint,
+                        error = %e,
+                        wait_secs = wait,
+                        "{verb} failed, retrying"
+                    );
                     tokio::time::sleep(Duration::from_secs_f64(wait)).await;
                     last_err = Some(ExchangeError::Http(e));
                 }
@@ -292,7 +342,7 @@ impl KuCoinClient {
 
         Err(last_err.unwrap_or_else(|| ExchangeError::Api {
             code: "retry_exhausted".into(),
-            message: format!("DELETE {endpoint} failed after {retries} attempts"),
+            message: format!("{verb} {endpoint} failed after {retries} attempts"),
         }))
     }
 
@@ -304,7 +354,7 @@ impl KuCoinClient {
                 .get("gw-ratelimit-reset")
                 .and_then(|h| h.to_str().ok())
                 .and_then(|s| s.parse::<u64>().ok())
-                .unwrap_or(2000); // Default to 2 seconds if header is missing
+                .unwrap_or(2_000); // Default to 2 seconds if header is missing
 
             warn!(reset_ms, "Rate limited (HTTP 429). Pausing request.");
             return Some(Duration::from_millis(reset_ms));
@@ -330,7 +380,46 @@ impl KuCoinClient {
         }
 
         let data = raw.get("data").cloned().unwrap_or(Value::Null);
-
         serde_json::from_value(data).map_err(ExchangeError::Json)
+    }
+}
+
+// ── Unit tests ────────────────────────────────────────────────────────────────
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn percent_encode_leaves_unreserved_chars_unchanged() {
+        assert_eq!(percent_encode("XBTUSDTM"), "XBTUSDTM");
+        assert_eq!(percent_encode("abc-123_def.ghi~"), "abc-123_def.ghi~");
+    }
+
+    #[test]
+    fn percent_encode_encodes_special_chars() {
+        assert_eq!(percent_encode("a b"), "a%20b");
+        assert_eq!(percent_encode("a=b&c=d"), "a%3Db%26c%3Dd");
+        assert_eq!(percent_encode("a+b"), "a%2Bb");
+    }
+
+    #[test]
+    fn build_query_string_empty() {
+        assert_eq!(build_query_string(&[]), "");
+    }
+
+    #[test]
+    fn build_query_string_encodes_values() {
+        let qs = build_query_string(&[("symbol", "XBT USDT"), ("side", "buy&sell")]);
+        assert_eq!(qs, "?symbol=XBT%20USDT&side=buy%26sell");
+    }
+
+    #[test]
+    fn jitter_stays_within_25_percent() {
+        let base = 4.0_f64;
+        for _ in 0..100 {
+            let j = jitter_secs(base);
+            assert!(j.abs() <= base * 0.25 + 1e-9, "jitter {j} exceeded ±25% of {base}");
+        }
     }
 }

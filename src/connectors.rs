@@ -28,7 +28,7 @@
 //!
 //! # async fn example() -> exchange_apiws::Result<()> {
 //! let kucoin = KuCoin::futures(Credentials::from_env()?);
-//! let client = kucoin.rest_client();
+//! let client = kucoin.rest_client()?;
 //!
 //! let bal  = client.get_balance("USDT").await?;
 //! let token = client.get_ws_token_public().await?;
@@ -111,7 +111,7 @@ impl KucoinEnv {
 /// # use exchange_apiws::client::Credentials;
 /// # use exchange_apiws::connectors::KuCoin;
 /// let kucoin  = KuCoin::futures(Credentials::from_env().unwrap());
-/// let client  = kucoin.rest_client();
+/// let client  = kucoin.rest_client().unwrap();
 /// ```
 pub struct KuCoin {
     creds: Credentials,
@@ -160,7 +160,7 @@ impl KuCoin {
     /// # use std::sync::Arc;
     /// # async fn example() -> exchange_apiws::Result<()> {
     /// let kucoin = KuCoin::futures(Credentials::from_env()?);
-    /// let client = kucoin.rest_client();
+    /// let client = kucoin.rest_client()?;
     /// let token  = client.get_ws_token_public().await?;
     /// let ws     = Arc::new(KucoinConnector::new(&token, kucoin.env())?);
     /// # Ok(())
@@ -174,7 +174,11 @@ impl KuCoin {
     ///
     /// The returned [`KuCoinClient`] is `Clone` — create it once and clone
     /// cheaply into tasks that need independent lifetimes.
-    pub fn rest_client(&self) -> KuCoinClient {
+    ///
+    /// # Errors
+    /// Returns [`ExchangeError::Config`] if the underlying HTTP client cannot
+    /// be initialised (e.g. TLS failure). This is extremely rare in practice.
+    pub fn rest_client(&self) -> crate::error::Result<KuCoinClient> {
         KuCoinClient::with_base_url(self.creds.clone(), self.env.rest_base())
     }
 }
@@ -201,7 +205,7 @@ impl KuCoinClient {
     ///
     /// Prefer [`KuCoin::rest_client`] when you are already working with a
     /// [`KuCoin`] config struct, as it avoids importing `KucoinEnv` separately.
-    pub fn new(creds: Credentials, env: KucoinEnv) -> Self {
+    pub fn new(creds: Credentials, env: KucoinEnv) -> crate::error::Result<Self> {
         Self::with_base_url(creds, env.rest_base())
     }
 }

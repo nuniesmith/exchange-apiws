@@ -18,7 +18,7 @@
 //! async fn main() -> exchange_apiws::Result<()> {
 //!     // ── Connect ───────────────────────────────────────────────────────────
 //!     let kucoin = KuCoin::futures(Credentials::from_env()?);
-//!     let client = kucoin.rest_client();
+//!     let client = kucoin.rest_client()?;
 //!
 //!     // ── REST ──────────────────────────────────────────────────────────────
 //!     let bal  = client.get_balance("USDT").await?;
@@ -28,23 +28,6 @@
 //!     // ── WebSocket (public) ────────────────────────────────────────────────
 //!     let token = client.get_ws_token_public().await?;
 //!     let conn  = Arc::new(KucoinConnector::new(&token, kucoin.env())?);
-//!
-//!     let mut subs = vec![];
-//!     if let Some(s) = conn.trade_subscription("XBTUSDTM")  { subs.push(s); }
-//!     if let Some(s) = conn.ticker_subscription("XBTUSDTM") { subs.push(s); }
-//!
-//!     let (tx, mut rx)    = mpsc::channel::<DataMessage>(1024);
-//!     let (sd_tx, sd_rx)  = watch::channel(false);
-//!     let config = WsRunnerConfig::from_ping_interval(conn.ping_interval_secs);
-//!
-//!     tokio::spawn(run_feed(conn.ws_url().to_string(), subs, conn, tx, config, sd_rx));
-//!
-//!     while let Some(msg) = rx.recv().await {
-//!         println!("{msg:?}");
-//!     }
-//!     Ok(())
-//! }
-//! ```
 //!
 //!     let mut subs = vec![];
 //!     if let Some(s) = conn.trade_subscription("XBTUSDTM")  { subs.push(s); }

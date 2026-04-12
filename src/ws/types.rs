@@ -62,7 +62,11 @@ pub struct WsMessage {
 }
 
 impl WsMessage {
-    /// Generates KuCoin's required application-level ping.
+    /// Generates KuCoin's required application-level ping as a struct.
+    ///
+    /// The `id` field is populated with a fresh UUID for request/response
+    /// correlation. Prefer [`WsMessage::ping_json`] on the hot send path to
+    /// avoid repeated allocations when the id is not used.
     pub fn ping() -> Self {
         Self {
             id: uuid::Uuid::new_v4().to_string(),
@@ -73,5 +77,16 @@ impl WsMessage {
             private_channel: None,
             response: None,
         }
+    }
+
+    /// Returns a pre-computed JSON string for the KuCoin application-level ping.
+    ///
+    /// KuCoin pings do not require request/response correlation — the server
+    /// responds with `{"type":"pong"}` regardless of the `id` field. This
+    /// avoids a UUID allocation and a `serde_json::to_string` call on every
+    /// ping tick.
+    #[inline]
+    pub const fn ping_json() -> &'static str {
+        r#"{"type":"ping"}"#
     }
 }

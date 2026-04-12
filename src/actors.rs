@@ -108,6 +108,10 @@ pub struct OrderBookData {
 }
 
 /// Unified market data message emitted by any exchange connector.
+///
+/// Marked `#[non_exhaustive]` so new feed types (e.g. `FundingRate`) can be
+/// added in minor releases without breaking downstream `match` arms.
+#[non_exhaustive]
 #[derive(Debug, Clone)]
 pub enum DataMessage {
     /// A matched trade execution.

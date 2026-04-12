@@ -12,6 +12,11 @@ readme        = "README.md"
 keywords      = ["kucoin", "crypto", "trading", "websocket", "futures"]
 categories    = ["api-bindings", "network-programming", "asynchronous"]
 
+[features]
+# Expose development-only helpers (e.g. `Credentials::sim()`) in non-test
+# binaries. Never enable this in production builds.
+testutils = []
+
 # ── Runtime dependencies ───────────────────────────────────────────────────────
 
 [dependencies]
@@ -45,6 +50,9 @@ chrono = { version = "0.4", features = ["serde"] }
 
 # Unique client-order IDs.
 uuid = { version = "1", features = ["v4"] }
+
+# Zero credential memory on drop — prevents key material leaking in heap dumps.
+zeroize = { version = "1", features = ["derive"] }
 
 # KuCoin HMAC-SHA256 signing
 hmac   = "0.12"

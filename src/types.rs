@@ -2,6 +2,8 @@
 
 use serde::{Deserialize, Serialize};
 
+use crate::error::{ExchangeError, Result};
+
 // ── Candle ─────────────────────────────────────────────────────────────────────
 
 /// OHLCV candle (millisecond timestamp).
@@ -25,23 +27,50 @@ impl Candle {
     /// Parse from KuCoin raw kline array `[ts_ms, open, high, low, close, volume]`.
     ///
     /// KuCoin returns prices/volumes as strings inside the inner array.
-    pub fn from_raw(arr: &[serde_json::Value]) -> Option<Self> {
-        let num = |i: usize| -> Option<f64> {
-            let v = arr.get(i)?;
-            // KuCoin sends numbers as strings in kline arrays.
+    ///
+    /// # Errors
+    /// Returns [`ExchangeError::InsufficientData`] when the array is too short
+    /// or a field cannot be parsed as a number, with a message identifying
+    /// which index and value failed.
+    pub fn from_raw(arr: &[serde_json::Value]) -> Result<Self> {
+        if arr.len() < 6 {
+            return Err(ExchangeError::InsufficientData(format!(
+                "candle array too short: expected ≥6 elements, got {}",
+                arr.len()
+            )));
+        }
+
+        let time = arr[0].as_i64().ok_or_else(|| {
+            ExchangeError::InsufficientData(format!(
+                "candle[0] (timestamp) is not an integer: {:?}",
+                arr[0]
+            ))
+        })?;
+
+        let num = |i: usize, field: &str| -> Result<f64> {
+            let v = &arr[i];
             if let Some(s) = v.as_str() {
-                s.parse().ok()
+                s.parse::<f64>().map_err(|_| {
+                    ExchangeError::InsufficientData(format!(
+                        "candle[{i}] ({field}) could not be parsed as f64: {s:?}"
+                    ))
+                })
             } else {
-                v.as_f64()
+                v.as_f64().ok_or_else(|| {
+                    ExchangeError::InsufficientData(format!(
+                        "candle[{i}] ({field}) is not a number: {v:?}"
+                    ))
+                })
             }
         };
-        Some(Self {
-            time: arr.first()?.as_i64()?,
-            open: num(1)?,
-            high: num(2)?,
-            low: num(3)?,
-            close: num(4)?,
-            volume: num(5)?,
+
+        Ok(Self {
+            time,
+            open: num(1, "open")?,
+            high: num(2, "high")?,
+            low: num(3, "low")?,
+            close: num(4, "close")?,
+            volume: num(5, "volume")?,
         })
     }
 }
@@ -108,35 +137,6 @@ impl OrderType {
 impl std::fmt::Display for OrderType {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.write_str(self.as_str())
-    }
-}
-
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn candle_parse_string_fields() {
-        let arr = serde_json::json!([
-            1_713_000_000_000_i64,
-            "86000.0",
-            "87000.0",
-            "85000.0",
-            "86500.0",
-            "1234.5"
-        ]);
-        let row = arr.as_array().unwrap();
-        let c = Candle::from_raw(row).expect("should parse");
-        assert_eq!(c.time, 1_713_000_000_000);
-        assert!((c.open - 86000.0).abs() < 1e-9);
-        assert!((c.close - 86500.0).abs() < 1e-9);
-    }
-
-    #[test]
-    fn side_flip() {
-        assert_eq!(Side::Buy.flip(), Side::Sell);
-        assert_eq!(Side::Sell.flip(), Side::Buy);
     }
 }
 
@@ -212,5 +212,61 @@ impl STP {
 impl std::fmt::Display for STP {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.write_str(self.as_str())
+    }
+}
+
+// ── Tests ─────────────────────────────────────────────────────────────────────
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn candle_parse_string_fields() {
+        let arr = serde_json::json!([
+            1_713_000_000_000_i64,
+            "86000.0",
+            "87000.0",
+            "85000.0",
+            "86500.0",
+            "1234.5"
+        ]);
+        let row = arr.as_array().unwrap();
+        let c = Candle::from_raw(row).expect("should parse");
+        assert_eq!(c.time, 1_713_000_000_000);
+        assert!((c.open - 86000.0).abs() < 1e-9);
+        assert!((c.close - 86500.0).abs() < 1e-9);
+    }
+
+    #[test]
+    fn candle_too_short_returns_err() {
+        let arr = serde_json::json!([1_713_000_000_000_i64, "86000.0"]);
+        let row = arr.as_array().unwrap();
+        let err = Candle::from_raw(row).unwrap_err();
+        assert!(matches!(err, ExchangeError::InsufficientData(_)));
+        assert!(err.to_string().contains("too short"));
+    }
+
+    #[test]
+    fn candle_bad_field_returns_err_with_context() {
+        let arr = serde_json::json!([
+            1_713_000_000_000_i64,
+            "not-a-number",
+            "87000.0",
+            "85000.0",
+            "86500.0",
+            "1234.5"
+        ]);
+        let row = arr.as_array().unwrap();
+        let err = Candle::from_raw(row).unwrap_err();
+        assert!(matches!(err, ExchangeError::InsufficientData(_)));
+        // Error message should name which field and value failed.
+        assert!(err.to_string().contains("open"));
+    }
+
+    #[test]
+    fn side_flip() {
+        assert_eq!(Side::Buy.flip(), Side::Sell);
+        assert_eq!(Side::Sell.flip(), Side::Buy);
     }
 }

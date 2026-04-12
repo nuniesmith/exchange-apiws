@@ -248,7 +248,10 @@ pub async fn run_feed(
                             exchange = connector.exchange_name(),
                             "WS max reconnect attempts exhausted"
                         );
-                        return Err(ExchangeError::WsDisconnected);
+                        return Err(ExchangeError::WsDisconnected {
+                            url: url.to_string(),
+                            attempts,
+                        });
                     }
                 }
             }
@@ -361,17 +364,15 @@ async fn single_session(
 
             // ── Application-level ping ───────────────────────────────────────
             _ = ping_tick.tick() => {
-                match serde_json::to_string(&WsMessage::ping()) {
-                    Ok(text) => {
-                        guard.check().await;
-                        if let Err(e) = write.send(Message::Text(text.into())).await {
-                            warn!(error = %e, "ping send failed");
-                            return SessionOutcome::Disconnected;
-                        }
-                        debug!(exchange = connector.exchange_name(), "sent ping");
-                    }
-                    Err(e) => warn!(error = %e, "ping serialisation failed"),
+                guard.check().await;
+                if let Err(e) = write
+                    .send(Message::Text(WsMessage::ping_json().into()))
+                    .await
+                {
+                    warn!(error = %e, "ping send failed");
+                    return SessionOutcome::Disconnected;
                 }
+                debug!(exchange = connector.exchange_name(), "sent ping");
             }
         }
     }

@@ -3,6 +3,11 @@
 use thiserror::Error;
 
 /// All errors that can be returned by `exchange-apiws`.
+///
+/// Marked `#[non_exhaustive]` so downstream `match` arms must include a
+/// catch-all (`_`). This allows new variants to be added in minor releases
+/// without breaking callers.
+#[non_exhaustive]
 #[derive(Debug, Error)]
 pub enum ExchangeError {
     /// HTTP transport error from `reqwest`.
@@ -39,8 +44,16 @@ pub enum ExchangeError {
     Order(String),
 
     /// WebSocket feed gave up after exhausting all reconnect attempts.
-    #[error("WebSocket disconnected after max reconnect attempts")]
-    WsDisconnected,
+    ///
+    /// Carries the WS URL and the number of attempts made so callers can log
+    /// which feed died and how hard it tried.
+    #[error("WebSocket disconnected after {attempts} reconnect attempts on {url}")]
+    WsDisconnected {
+        /// The WSS URL that failed.
+        url: String,
+        /// Number of consecutive reconnect attempts before giving up.
+        attempts: u32,
+    },
 
     /// Not enough historical data to complete the requested operation.
     #[error("Insufficient data: {0}")]

@@ -14,6 +14,8 @@ use hmac::{Hmac, Mac};
 use reqwest::header::{CONTENT_TYPE, HeaderMap, HeaderValue};
 use sha2::Sha256;
 
+use crate::error::{ExchangeError, Result};
+
 type HmacSha256 = Hmac<Sha256>;
 
 /// Compute `base64(HMAC-SHA256(key, message))`.
@@ -24,6 +26,10 @@ pub fn hmac_b64(key: &str, message: &str) -> String {
 }
 
 /// Build the full signed header map for one KuCoin Futures request.
+///
+/// Returns `Err(ExchangeError::Auth)` if any header value cannot be encoded
+/// (e.g. contains non-ASCII bytes). In practice this can only happen if a
+/// credential or HMAC digest is malformed.
 ///
 /// # Arguments
 /// - `endpoint` — path **plus** query string if present, e.g.
@@ -37,7 +43,7 @@ pub fn build_headers(
     method: &str,
     endpoint: &str,
     body: &str,
-) -> HeaderMap {
+) -> Result<HeaderMap> {
     let ts = chrono::Utc::now().timestamp_millis().to_string();
     let prehash = format!("{}{}{}{}", ts, method.to_uppercase(), endpoint, body);
 
@@ -45,17 +51,27 @@ pub fn build_headers(
     let pp_sig = hmac_b64(secret, passphrase);
 
     let mut h = HeaderMap::new();
-    h.insert("KC-API-KEY", hv(key));
-    h.insert("KC-API-SIGN", hv(&sig));
-    h.insert("KC-API-TIMESTAMP", hv(&ts));
-    h.insert("KC-API-PASSPHRASE", hv(&pp_sig));
+    h.insert("KC-API-KEY", hv(key)?);
+    h.insert("KC-API-SIGN", hv(&sig)?);
+    h.insert("KC-API-TIMESTAMP", hv(&ts)?);
+    h.insert("KC-API-PASSPHRASE", hv(&pp_sig)?);
     h.insert("KC-API-KEY-VERSION", HeaderValue::from_static("2"));
     h.insert(CONTENT_TYPE, HeaderValue::from_static("application/json"));
-    h
+    Ok(h)
 }
 
-fn hv(s: &str) -> HeaderValue {
-    HeaderValue::from_str(s).expect("header value contains non-ASCII")
+/// Convert a string to a `HeaderValue`, returning `Err(Auth)` on failure.
+///
+/// `HeaderValue::from_str` rejects strings containing bytes outside the
+/// visible ASCII range (32–127, excluding DEL). API keys and HMAC-SHA256
+/// base64 digests only use printable ASCII, so this should never fail in
+/// practice — but we propagate the error rather than panicking.
+fn hv(s: &str) -> Result<HeaderValue> {
+    HeaderValue::from_str(s).map_err(|_| {
+        ExchangeError::Auth(format!(
+            "header value contains invalid bytes: {s:?}"
+        ))
+    })
 }
 
 #[cfg(test)]
@@ -79,11 +95,19 @@ mod tests {
 
     #[test]
     fn build_headers_has_required_keys() {
-        let h = build_headers("key", "secret", "pass", "POST", "/api/v1/orders", "{}");
+        let h = build_headers("key", "secret", "pass", "POST", "/api/v1/orders", "{}")
+            .expect("valid ASCII credentials should never fail");
         assert!(h.contains_key("KC-API-KEY"));
         assert!(h.contains_key("KC-API-SIGN"));
         assert!(h.contains_key("KC-API-TIMESTAMP"));
         assert!(h.contains_key("KC-API-PASSPHRASE"));
         assert_eq!(h.get("KC-API-KEY-VERSION").unwrap(), "2");
+    }
+
+    #[test]
+    fn build_headers_returns_err_on_invalid_key() {
+        // A NUL byte is not valid in a header value.
+        let result = build_headers("key\0bad", "secret", "pass", "GET", "/api/v1/test", "");
+        assert!(result.is_err());
     }
 }

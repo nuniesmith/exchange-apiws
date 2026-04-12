@@ -157,7 +157,16 @@ impl KuCoinClient {
             )
             .await?;
 
-        let candles = raw.iter().filter_map(|r| Candle::from_raw(r)).collect();
+        let candles = raw
+            .iter()
+            .filter_map(|r| match Candle::from_raw(r) {
+                Ok(c) => Some(c),
+                Err(e) => {
+                    tracing::warn!(error = %e, "skipping malformed candle");
+                    None
+                }
+            })
+            .collect();
         debug!(symbol, granularity, count = raw.len(), "fetched klines");
         Ok(candles)
     }
@@ -202,7 +211,16 @@ impl KuCoinClient {
                 .await?;
 
             let n = raw.len();
-            let mut page: Vec<Candle> = raw.iter().filter_map(|r| Candle::from_raw(r)).collect();
+            let mut page: Vec<Candle> = raw
+                .iter()
+                .filter_map(|r| match Candle::from_raw(r) {
+                    Ok(c) => Some(c),
+                    Err(e) => {
+                        tracing::warn!(error = %e, "skipping malformed candle in page");
+                        None
+                    }
+                })
+                .collect();
             page.sort_by_key(|c| c.time);
             all.extend(page);
 
