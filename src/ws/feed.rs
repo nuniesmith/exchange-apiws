@@ -4,23 +4,25 @@
 //!
 //! ## Public
 //!
-//! | Topic                                 | Env     | Emits                    |
-//! |---------------------------------------|---------|-----------------------------|
-//! | `/contractMarket/execution:{sym}`     | Futures | `DataMessage::Trade`     |
-//! | `/market/match:{sym}`                 | Spot    | `DataMessage::Trade`     |
-//! | `/contractMarket/tickerV2:{sym}`      | Futures | `DataMessage::Ticker`    |
-//! | `/market/ticker:{sym}`                | Spot    | `DataMessage::Ticker`    |
+//! | Topic                                 | Env     | Emits                               |
+//! |---------------------------------------|---------|-------------------------------------|
+//! | `/contractMarket/execution:{sym}`     | Futures | `DataMessage::Trade`                |
+//! | `/market/match:{sym}`                 | Spot    | `DataMessage::Trade`                |
+//! | `/contractMarket/tickerV2:{sym}`      | Futures | `DataMessage::Ticker`               |
+//! | `/market/ticker:{sym}`                | Spot    | `DataMessage::Ticker`               |
 //! | `/contractMarket/level2Depth5:{sym}`  | Futures | `DataMessage::OrderBook` (snapshot) |
 //! | `/contractMarket/level2Depth50:{sym}` | Futures | `DataMessage::OrderBook` (snapshot) |
 //! | `/contractMarket/level2:{sym}`        | Futures | `DataMessage::OrderBook` (delta)    |
+//! | `/contract/instrument:{sym}`          | Futures | `DataMessage::InstrumentEvent`      |
 //!
 //! ## Private (requires private WS token)
 //!
-//! | Topic                          | Env     | Emits                         |
-//! |--------------------------------|---------|-------------------------------|
-//! | `/contractMarket/tradeOrders`  | Futures | `DataMessage::OrderUpdate`    |
-//! | `/contract/position:{sym}`     | Futures | `DataMessage::PositionChange` |
-//! | `/contractAccount/wallet`      | Futures | `DataMessage::BalanceUpdate`  |
+//! | Topic                            | Env     | Emits                              |
+//! |----------------------------------|---------|------------------------------------|
+//! | `/contractMarket/tradeOrders`    | Futures | `DataMessage::OrderUpdate`         |
+//! | `/contract/position:{sym}`       | Futures | `DataMessage::PositionChange`      |
+//! | `/contractAccount/wallet`        | Futures | `DataMessage::BalanceUpdate`       |
+//! | `/contractMarket/advancedOrders` | Futures | `DataMessage::AdvancedOrderUpdate` |
 //!
 //! Build subscription messages with the dedicated helpers on [`KucoinConnector`]
 //! rather than constructing topic strings by hand.
@@ -29,10 +31,10 @@ use serde_json::Value;
 use uuid::Uuid;
 
 use crate::actors::{
-    BalanceUpdate, DataMessage, ExchangeConnector, OrderBookData, OrderUpdate, PositionChange,
-    TickerData, TradeData, TradeSide, WebSocketConfig,
+    AdvancedOrderUpdate, BalanceUpdate, DataMessage, ExchangeConnector, InstrumentEvent,
+    OrderBookData, OrderUpdate, PositionChange, TickerData, TradeData, TradeSide, WebSocketConfig,
 };
-use crate::client::KucoinEnv;
+use crate::connectors::KucoinEnv;
 use crate::error::Result;
 use crate::ws::types::{WsMessage, WsToken};
 
@@ -45,11 +47,15 @@ use crate::ws::types::{WsMessage, WsToken};
 /// or [`KuCoinClient::get_ws_token_public`][crate::client::KuCoinClient::get_ws_token_public].
 ///
 /// ```no_run
-/// # use exchange_apiws::{KuCoinClient, Credentials, KucoinEnv};
+/// # use exchange_apiws::{KuCoinClient, Credentials};
+/// # use exchange_apiws::connectors::{KuCoin, KucoinEnv};
 /// # use exchange_apiws::ws::KucoinConnector;
-/// # async fn example(client: KuCoinClient) -> exchange_apiws::Result<()> {
-/// let token = client.get_ws_token_public().await?;
-/// let connector = KucoinConnector::new(&token, KucoinEnv::LiveFutures)?;
+/// # async fn example() -> exchange_apiws::Result<()> {
+/// // Preferred: use the KuCoin builder
+/// let kucoin = KuCoin::futures(Credentials::from_env()?);
+/// let client = kucoin.rest_client();
+/// let token  = client.get_ws_token_public().await?;
+/// let connector = KucoinConnector::new(&token, kucoin.env())?;
 /// # Ok(())
 /// # }
 /// ```
@@ -187,6 +193,36 @@ impl KucoinConnector {
         Self::build_sub("/contractAccount/wallet".to_string(), true)
     }
 
+    /// Subscribe to real-time index price, mark price, and funding rate events
+    /// for `symbol`.
+    ///
+    /// **Public** — no private token needed.
+    ///
+    /// KuCoin pushes three subjects on this topic:
+    /// - `"mark.index.price"` — mark price and index price update.
+    /// - `"funding.rate"` — current and predicted funding rate update.
+    /// - `"premium.index"` — the premium index used to derive the funding rate.
+    ///
+    /// Emits `DataMessage::InstrumentEvent`.
+    ///
+    /// Topic: `/contract/instrument:{symbol}` (Futures)
+    pub fn instrument_subscription(&self, symbol: &str) -> Option<String> {
+        Self::build_sub(format!("/contract/instrument:{symbol}"), false)
+    }
+
+    /// Subscribe to private stop/trigger order lifecycle events.
+    ///
+    /// Requires a **private** WS token.
+    ///
+    /// Emits `DataMessage::AdvancedOrderUpdate` whenever a stop order is:
+    /// - placed (`"open"`), triggered (`"triggered"`), cancelled (`"cancel"`),
+    ///   or fails to place after triggering (`"fail"`).
+    ///
+    /// Topic: `/contractMarket/advancedOrders` (Futures)
+    pub fn stop_orders_subscription(&self) -> Option<String> {
+        Self::build_sub("/contractMarket/advancedOrders".to_string(), true)
+    }
+
     // ── Internal helpers ──────────────────────────────────────────────────────
 
     fn build_sub(topic: String, private_channel: bool) -> Option<String> {
@@ -261,6 +297,11 @@ impl ExchangeConnector for KucoinConnector {
                     Ok(parse_position_change(symbol, exchange, &data))
                 } else if topic.contains("/contractAccount/wallet") {
                     Ok(parse_balance_update(exchange, &data))
+                } else if topic.contains("/contract/instrument") {
+                    let subject = msg.subject.as_deref().unwrap_or("unknown");
+                    Ok(parse_instrument_event(symbol, exchange, subject, &data))
+                } else if topic.contains("/contractMarket/advancedOrders") {
+                    Ok(parse_advanced_order_update(exchange, &data))
                 } else {
                     Ok(vec![])
                 }
@@ -516,6 +557,98 @@ fn parse_balance_update(exchange: &str, data: &Value) -> Vec<DataMessage> {
         available_balance: str_f64(data, "availableBalance"),
         hold_balance: str_f64(data, "holdBalance"),
         event: data["event"].as_str().unwrap_or("unknown").to_string(),
+        exchange_ts,
+        receipt_ts: chrono::Utc::now().timestamp_millis(),
+    })]
+}
+
+fn parse_instrument_event(
+    symbol: &str,
+    exchange: &str,
+    subject: &str,
+    data: &Value,
+) -> Vec<DataMessage> {
+    // KuCoin sends `granularity` as the timestamp field on this topic.
+    let exchange_ts = data["timestamp"]
+        .as_i64()
+        .or_else(|| data["ts"].as_i64())
+        .unwrap_or_else(|| chrono::Utc::now().timestamp_millis());
+
+    // Fields present depend on the subject.  Parse all opportunistically.
+    let mark_price = if str_f64(data, "markPrice") != 0.0 {
+        Some(str_f64(data, "markPrice"))
+    } else {
+        None
+    };
+    let index_price = if str_f64(data, "indexPrice") != 0.0 {
+        Some(str_f64(data, "indexPrice"))
+    } else {
+        None
+    };
+    let funding_rate = if str_f64(data, "fundingRate") != 0.0 {
+        Some(str_f64(data, "fundingRate"))
+    } else {
+        None
+    };
+    let predicted_funding_rate = if str_f64(data, "predictedValue") != 0.0 {
+        Some(str_f64(data, "predictedValue"))
+    } else {
+        None
+    };
+    let premium_index = if str_f64(data, "premiumIndex") != 0.0 {
+        Some(str_f64(data, "premiumIndex"))
+    } else {
+        None
+    };
+
+    vec![DataMessage::InstrumentEvent(InstrumentEvent {
+        symbol: symbol.to_string(),
+        exchange: exchange.to_string(),
+        subject: subject.to_string(),
+        mark_price,
+        index_price,
+        funding_rate,
+        predicted_funding_rate,
+        premium_index,
+        exchange_ts,
+        receipt_ts: chrono::Utc::now().timestamp_millis(),
+    })]
+}
+
+fn parse_advanced_order_update(exchange: &str, data: &Value) -> Vec<DataMessage> {
+    let side = match data["side"].as_str().unwrap_or("buy") {
+        s if s.eq_ignore_ascii_case("sell") => TradeSide::Sell,
+        _ => TradeSide::Buy,
+    };
+
+    // KuCoin sends the timestamp in nanoseconds for advanced orders.
+    let exchange_ts = data["ts"]
+        .as_i64()
+        .map(|ns| ns / 1_000_000)
+        .or_else(|| data["updatedAt"].as_i64())
+        .unwrap_or_else(|| chrono::Utc::now().timestamp_millis());
+
+    let stop_price = {
+        let v = str_f64(data, "stopPrice");
+        if v != 0.0 { Some(v) } else { None }
+    };
+    let price = {
+        let v = str_f64(data, "price");
+        if v != 0.0 { Some(v) } else { None }
+    };
+
+    vec![DataMessage::AdvancedOrderUpdate(AdvancedOrderUpdate {
+        symbol: data["symbol"].as_str().unwrap_or("").to_string(),
+        exchange: exchange.to_string(),
+        order_id: data["orderId"].as_str().unwrap_or("").to_string(),
+        client_oid: data["clientOid"].as_str().map(str::to_string),
+        status: data["status"].as_str().unwrap_or("").to_string(),
+        side,
+        order_type: data["type"].as_str().unwrap_or("market").to_string(),
+        stop: data["stop"].as_str().map(str::to_string),
+        stop_price,
+        price,
+        size: str_u32(data, "size"),
         exchange_ts,
         receipt_ts: chrono::Utc::now().timestamp_millis(),
     })]

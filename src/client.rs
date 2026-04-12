@@ -1,6 +1,11 @@
-//! `KuCoinClient` — authenticated reqwest wrapper with exponential-backoff retry.
+//! Generic HTTP client — authenticated reqwest wrapper with exponential-backoff retry.
 //!
-//! - Signs every request via `auth::build_headers`
+//! This module is **exchange-agnostic**. It knows how to sign requests, retry
+//! on transient failures, respect HTTP 429 rate-limit headers, and unwrap
+//! KuCoin's JSON envelope — but it has no opinion about which environment
+//! or base URL to use. Environment routing lives in [`crate::connectors`].
+//!
+//! - Signs every request via [`crate::auth::build_headers`]
 //! - Retries on transient failures with configurable backoff
 //! - Auto-pauses on HTTP 429 (Rate Limit) using KuCoin's reset headers
 //! - Unwraps KuCoin's `{"code":"200000","data":{...}}` envelope
@@ -14,29 +19,6 @@ use tracing::warn;
 
 use crate::auth::build_headers;
 use crate::error::{ExchangeError, Result};
-
-// ── Environment Routing ───────────────────────────────────────────────────────
-
-/// KuCoin API Environment. Allows routing to Spot, Futures, or UTA.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum KucoinEnv {
-    /// KuCoin Spot exchange (`api.kucoin.com`).
-    LiveSpot,
-    /// KuCoin Futures exchange (`api-futures.kucoin.com`).
-    LiveFutures,
-    /// KuCoin Unified Trade Account — routes to the Spot base URL.
-    Unified, // Unified Trade Account
-}
-
-impl KucoinEnv {
-    /// Base REST URL for this environment.
-    pub const fn rest_base(&self) -> &'static str {
-        match self {
-            Self::LiveFutures => "https://api-futures.kucoin.com",
-            Self::LiveSpot | Self::Unified => "https://api.kucoin.com",
-        }
-    }
-}
 
 // ── Credentials ───────────────────────────────────────────────────────────────
 
@@ -95,11 +77,6 @@ pub struct KuCoinClient {
 }
 
 impl KuCoinClient {
-    /// Create a new client targeting a specific KuCoin environment (e.g., Futures)
-    pub fn new(creds: Credentials, env: KucoinEnv) -> Self {
-        Self::with_base_url(creds, env.rest_base())
-    }
-
     /// Create a client with an explicit base URL (useful for testing/proxies).
     pub fn with_base_url(creds: Credentials, base_url: impl Into<String>) -> Self {
         let http = Client::builder()
@@ -167,7 +144,12 @@ impl KuCoinClient {
             match self.http.get(&url).headers(headers).send().await {
                 Ok(resp) => {
                     if let Some(wait) = Self::check_rate_limit(&resp) {
-                        warn!(attempt, path, wait_ms = wait.as_millis(), "GET rate-limited — waiting before retry");
+                        warn!(
+                            attempt,
+                            path,
+                            wait_ms = wait.as_millis(),
+                            "GET rate-limited — waiting before retry"
+                        );
                         tokio::time::sleep(wait).await;
                         // Rate-limit waits don't count against the backoff attempt budget;
                         // re-use the same `attempt` index on the next iteration.
@@ -227,7 +209,12 @@ impl KuCoinClient {
             {
                 Ok(resp) => {
                     if let Some(wait) = Self::check_rate_limit(&resp) {
-                        warn!(attempt, path, wait_ms = wait.as_millis(), "POST rate-limited — waiting before retry");
+                        warn!(
+                            attempt,
+                            path,
+                            wait_ms = wait.as_millis(),
+                            "POST rate-limited — waiting before retry"
+                        );
                         tokio::time::sleep(wait).await;
                         last_err = Some(ExchangeError::Api {
                             code: "429".into(),
@@ -277,7 +264,12 @@ impl KuCoinClient {
             match self.http.delete(&url).headers(headers).send().await {
                 Ok(resp) => {
                     if let Some(wait) = Self::check_rate_limit(&resp) {
-                        warn!(attempt, endpoint, wait_ms = wait.as_millis(), "DELETE rate-limited — waiting before retry");
+                        warn!(
+                            attempt,
+                            endpoint,
+                            wait_ms = wait.as_millis(),
+                            "DELETE rate-limited — waiting before retry"
+                        );
                         tokio::time::sleep(wait).await;
                         last_err = Some(ExchangeError::Api {
                             code: "429".into(),

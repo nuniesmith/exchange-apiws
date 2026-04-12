@@ -123,6 +123,14 @@ pub enum DataMessage {
     PositionChange(PositionChange),
     /// A wallet or margin balance change.
     BalanceUpdate(BalanceUpdate),
+    /// An index price / mark price / premium index event from the instrument feed.
+    ///
+    /// Emitted on `/contract/instrument:{symbol}` (public).
+    InstrumentEvent(InstrumentEvent),
+    /// A stop/trigger order status event from the private advanced-orders feed.
+    ///
+    /// Emitted on `/contractMarket/advancedOrders` (private).
+    AdvancedOrderUpdate(AdvancedOrderUpdate),
 }
 
 // ── Connector trait ───────────────────────────────────────────────────────────
@@ -228,6 +236,79 @@ pub struct BalanceUpdate {
     pub hold_balance: f64,
     /// Event tag from KuCoin — e.g. `"orderMargin.create"`, `"trade.settled"`.
     pub event: String,
+    /// Exchange timestamp in milliseconds.
+    pub exchange_ts: i64,
+    /// Local receipt timestamp in milliseconds.
+    pub receipt_ts: i64,
+}
+
+/// An instrument event from the public `/contract/instrument:{symbol}` feed.
+///
+/// KuCoin pushes three subjects on this topic:
+/// - `"mark.index.price"` — mark price and underlying index price update.
+/// - `"funding.rate"` — current + predicted funding rate update.
+/// - `"premium.index"` — the premium index used to compute the funding rate.
+///
+/// All three are surfaced in a single struct with `Option` fields; populate
+/// only the fields that arrive in the specific subject.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct InstrumentEvent {
+    /// Instrument symbol.
+    pub symbol: String,
+    /// Exchange identifier.
+    pub exchange: String,
+    /// Subject tag from KuCoin identifying which metric changed.
+    /// One of `"mark.index.price"`, `"funding.rate"`, or `"premium.index"`.
+    pub subject: String,
+    /// Current mark price.
+    pub mark_price: Option<f64>,
+    /// Underlying spot index price.
+    pub index_price: Option<f64>,
+    /// Current funding rate (e.g. `0.0001` = 0.01 %).
+    pub funding_rate: Option<f64>,
+    /// Predicted next-period funding rate.
+    pub predicted_funding_rate: Option<f64>,
+    /// Premium index value.
+    pub premium_index: Option<f64>,
+    /// Exchange timestamp in milliseconds.
+    pub exchange_ts: i64,
+    /// Local receipt timestamp in milliseconds.
+    pub receipt_ts: i64,
+}
+
+/// A stop/trigger order lifecycle event from the private
+/// `/contractMarket/advancedOrders` feed.
+///
+/// KuCoin emits this whenever a stop order is placed, triggered, cancelled,
+/// or fails to trigger. Use `status` to differentiate:
+/// - `"open"` — stop order accepted and waiting for the trigger price.
+/// - `"triggered"` — trigger fired; a new regular order was placed.
+/// - `"cancel"` — stop order cancelled before triggering.
+/// - `"fail"` — trigger fired but order placement failed.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AdvancedOrderUpdate {
+    /// Instrument symbol.
+    pub symbol: String,
+    /// Exchange identifier.
+    pub exchange: String,
+    /// Exchange-assigned stop order identifier.
+    pub order_id: String,
+    /// Client-supplied order identifier, if provided at placement.
+    pub client_oid: Option<String>,
+    /// Lifecycle status: `"open"`, `"triggered"`, `"cancel"`, or `"fail"`.
+    pub status: String,
+    /// Order side (buy or sell).
+    pub side: TradeSide,
+    /// `"market"` or `"limit"` — the type of order placed on trigger.
+    pub order_type: String,
+    /// Stop direction — `"up"` or `"down"`.
+    pub stop: Option<String>,
+    /// Trigger price.
+    pub stop_price: Option<f64>,
+    /// Limit price (present for stop-limit orders only).
+    pub price: Option<f64>,
+    /// Order quantity in contracts.
+    pub size: u32,
     /// Exchange timestamp in milliseconds.
     pub exchange_ts: i64,
     /// Local receipt timestamp in milliseconds.

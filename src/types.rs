@@ -111,27 +111,6 @@ impl std::fmt::Display for OrderType {
     }
 }
 
-// ── Contract sizing ───────────────────────────────────────────────────────────
-
-/// Notional value (in quote currency) of **one** contract for the given symbol.
-///
-/// Used by `calc_contracts` to size positions correctly.
-/// Inverse (USD-margined) contracts are denominated in USD;
-/// linear (USDT-margined) contracts express the base-coin multiplier.
-pub fn contract_value(symbol: &str) -> f64 {
-    match symbol {
-        // Inverse / coin-margined (1 USD per contract)
-        "XBTUSDM" | "ETHUSDM" => 1.0,
-        // Linear / USDT-margined — base-coin multiplier
-        "XBTUSDTM" => 0.001, // 0.001 BTC
-        "ETHUSDTM" | "BNBUSDTM" => 0.01,
-        "SOLUSDTM" | "AVAXUSDTM" => 0.1,
-        "XRPUSDTM" | "ADAUSDTM" => 10.0,
-        "DOGEUSDTM" => 100.0, // 100 DOGE
-        "LINKUSDTM" => 1.0,
-        _ => 1.0, // safe fallback — log a warning if used
-    }
-}
 
 #[cfg(test)]
 mod tests {

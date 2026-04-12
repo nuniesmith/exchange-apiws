@@ -8,7 +8,7 @@ use uuid::Uuid;
 
 use crate::client::KuCoinClient;
 use crate::error::{ExchangeError, Result};
-use crate::types::{OrderType, STP, Side, TimeInForce, contract_value};
+use crate::types::{OrderType, STP, Side, TimeInForce};
 
 // ── Response types ─────────────────────────────────────────────────────────────
 
@@ -101,38 +101,51 @@ pub struct Fill {
 
 // ── Sizing utility ─────────────────────────────────────────────────────────────
 
-/// Calculate the number of contracts to open given account parameters.
-///
-/// # Arguments
-/// - `symbol`        — Futures symbol (e.g. `"XBTUSDTM"`).
-/// - `price`         — Current market price.
-/// - `balance`       — Available account balance in quote currency.
-/// - `leverage`      — Desired leverage (e.g. `10`).
-/// - `risk_fraction` — Fraction of `balance` to risk per trade (e.g. `0.02` = 2 %).
-/// - `max_contracts` — Hard cap on position size.
-///
-/// Returns at least 1 contract.
-pub fn calc_contracts(
-    symbol: &str,
-    price: f64,
-    balance: f64,
-    leverage: u32,
-    risk_fraction: f64,
-    max_contracts: u32,
-) -> u32 {
-    if price <= 0.0 {
-        tracing::warn!(price, "calc_contracts: invalid price — defaulting to 1");
-        return 1;
+impl KuCoinClient {
+    /// Calculate the number of contracts to open given account parameters.
+    ///
+    /// Fetches the contract multiplier at runtime from `/api/v1/contracts/{symbol}`
+    /// rather than a hard-coded table, so any listed symbol is handled correctly
+    /// and unlisted or misconfigured symbols return an explicit error instead of
+    /// silently producing wrong sizing.
+    ///
+    /// # Arguments
+    /// - `symbol`        — Futures symbol (e.g. `"XBTUSDTM"`).
+    /// - `price`         — Current market price.
+    /// - `balance`       — Available account balance in quote currency.
+    /// - `leverage`      — Desired leverage (e.g. `10`).
+    /// - `risk_fraction` — Fraction of `balance` to risk per trade (e.g. `0.02` = 2 %).
+    /// - `max_contracts` — Hard cap on position size.
+    ///
+    /// Returns at least 1 contract.
+    pub async fn calc_contracts(
+        &self,
+        symbol: &str,
+        price: f64,
+        balance: f64,
+        leverage: u32,
+        risk_fraction: f64,
+        max_contracts: u32,
+    ) -> Result<u32> {
+        if price <= 0.0 {
+            tracing::warn!(price, "calc_contracts: invalid price — defaulting to 1");
+            return Ok(1);
+        }
+        if leverage == 0 {
+            tracing::warn!("calc_contracts: leverage is 0 — defaulting to 1");
+            return Ok(1);
+        }
+        let contract = self.get_contract(symbol).await?;
+        let cv = contract.multiplier.ok_or_else(|| {
+            ExchangeError::Order(format!(
+                "calc_contracts: contract {symbol} returned no multiplier — cannot size position"
+            ))
+        })?;
+        let notional_per_ct = price * cv;
+        let margin_per_ct = notional_per_ct / f64::from(leverage);
+        let raw = (balance * risk_fraction / margin_per_ct) as u32;
+        Ok(raw.max(1).min(max_contracts))
     }
-    if leverage == 0 {
-        tracing::warn!("calc_contracts: leverage is 0 — defaulting to 1");
-        return 1;
-    }
-    let cv = contract_value(symbol);
-    let notional_per_ct = price * cv;
-    let margin_per_ct = notional_per_ct / f64::from(leverage);
-    let raw = (balance * risk_fraction / margin_per_ct) as u32;
-    raw.max(1).min(max_contracts)
 }
 
 // ── KuCoinClient methods ──────────────────────────────────────────────────────
@@ -143,7 +156,7 @@ impl KuCoinClient {
     /// `leverage` is passed as a per-order field. `time_in_force` defaults to
     /// [`TimeInForce::GTC`] when `None`. Pass `stp` to enable Self-Trade Prevention.
     ///
-    /// For **limit orders** `price` must be `Some(limit_price)`.  
+    /// For **limit orders** `price` must be `Some(limit_price)`.
     /// For **market orders** `price` should be `None` (the field is omitted from the request body).
     #[allow(clippy::similar_names, clippy::too_many_arguments)] // `side` and `size` are the correct public API parameter names
     pub async fn place_order(
@@ -321,4 +334,78 @@ impl KuCoinClient {
         self.delete(&format!("/api/v1/stopOrders?symbol={symbol}"))
             .await
     }
+
+    /// Fetch all **active** stop orders for a symbol.
+    ///
+    /// KuCoin stores untriggered stop orders in a separate bucket from regular
+    /// open orders.  Use this alongside [`get_open_orders`][Self::get_open_orders]
+    /// to get a complete picture of all outstanding orders.
+    ///
+    /// Endpoint: `GET /api/v1/stopOrders?symbol={symbol}`
+    pub async fn get_open_stop_orders(&self, symbol: &str) -> Result<Vec<StopOrderDetail>> {
+        #[derive(Deserialize)]
+        struct Page {
+            items: Vec<StopOrderDetail>,
+        }
+        let page: Page = self
+            .get("/api/v1/stopOrders", &[("symbol", symbol)])
+            .await?;
+        Ok(page.items)
+    }
+
+    /// Fetch the most recent **done** (filled or cancelled) orders for a symbol.
+    ///
+    /// `max_count` is capped at 100 per KuCoin's page limit.  Results are
+    /// ordered most-recent-first.
+    ///
+    /// Endpoint: `GET /api/v1/orders?status=done&symbol={symbol}`
+    pub async fn get_done_orders(&self, symbol: &str, max_count: u32) -> Result<Vec<OrderDetail>> {
+        #[derive(Deserialize)]
+        struct Page {
+            items: Vec<OrderDetail>,
+        }
+        let limit = max_count.min(100).to_string();
+        let page: Page = self
+            .get(
+                "/api/v1/orders",
+                &[("status", "done"), ("symbol", symbol), ("pageSize", &limit)],
+            )
+            .await?;
+        Ok(page.items)
+    }
+}
+
+// ── Stop order types ──────────────────────────────────────────────────────────
+
+/// A stop/trigger order entry returned by `GET /api/v1/stopOrders`.
+///
+/// Stop orders are held server-side and are not visible in the regular active
+/// order list until the trigger fires.
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct StopOrderDetail {
+    /// Exchange-assigned stop order identifier.
+    pub id: String,
+    /// Instrument symbol.
+    pub symbol: String,
+    /// Order side — `"buy"` or `"sell"`.
+    pub side: String,
+    #[serde(rename = "type")]
+    /// Order type that will be placed on trigger — `"market"` or `"limit"`.
+    pub order_type: String,
+    /// Stop trigger direction — `"up"` (triggers when price rises to `stop_price`)
+    /// or `"down"` (triggers when price falls).
+    pub stop: Option<String>,
+    /// Price at which the stop triggers.
+    pub stop_price: Option<f64>,
+    /// Limit price used when the stop fires as a limit order.
+    pub price: Option<f64>,
+    /// Total order quantity in contracts.
+    pub size: u32,
+    /// Leverage of the order.
+    pub leverage: Option<String>,
+    /// `true` if this order can only reduce an existing position.
+    pub reduce_only: Option<bool>,
+    /// Unix timestamp when the stop was placed (milliseconds).
+    pub created_at: Option<i64>,
 }

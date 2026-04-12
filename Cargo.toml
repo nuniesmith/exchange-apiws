@@ -21,7 +21,7 @@ tokio = { version = "1", features = ["rt-multi-thread", "macros", "time"] }
 
 # HTTP — use rustls so the crate builds on musl/Alpine without OpenSSL.
 # Disable default-features to drop the default OpenSSL backend.
-reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }
+reqwest = { version = "0.13", default-features = false, features = ["json"] }
 
 # WebSocket — rustls-tls-native-roots uses the OS trust store so wss:// works out of the box.
 tokio-tungstenite = { version = "0.26", features = ["rustls-tls-native-roots"] }
@@ -58,6 +58,8 @@ base64 = "0.22"
 tokio = { version = "1", features = ["rt-multi-thread", "macros"] }
 # Print tracing output during `cargo test -- --nocapture`.
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+# HTTP mock server for integration tests — spins up a local server per test.
+wiremock = "0.6"
 
 # ── Library entry point ────────────────────────────────────────────────────────
 

@@ -13,7 +13,7 @@
 //!   the maximum position size and the minimum maintenance margin rate. A higher
 //!   level allows larger positions but requires proportionally more margin.
 
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use serde_json::json;
 use tracing::{debug, info};
 
@@ -232,4 +232,164 @@ impl KuCoinClient {
             .await?;
         Ok(page.data_list)
     }
+
+    // ── Fund transfers ────────────────────────────────────────────────────────
+
+    /// Transfer funds from the **Futures** account to the **Main** account.
+    ///
+    /// Both the sending and receiving business accounts are on the same UID;
+    /// the funds move between the two sub-ledgers internally.
+    ///
+    /// `currency` — e.g. `"USDT"` or `"XBT"`.
+    /// `amount`   — exact decimal amount to transfer.
+    ///
+    /// Endpoint: `POST /api/v1/transfer-out`
+    pub async fn transfer_to_main(&self, currency: &str, amount: f64) -> Result<TransferResponse> {
+        let resp: TransferResponse = self
+            .post(
+                "/api/v1/transfer-out",
+                &json!({
+                    "currency": currency,
+                    "amount":   amount,
+                    "recAccountType": "MAIN",
+                }),
+            )
+            .await?;
+        info!(currency, amount, apply_id = %resp.apply_id, "transfer Futures→Main initiated");
+        Ok(resp)
+    }
+
+    /// Transfer funds from the **Main** account to the **Futures** account.
+    ///
+    /// `currency` — e.g. `"USDT"` or `"XBT"`.
+    /// `amount`   — exact decimal amount to transfer.
+    ///
+    /// Endpoint: `POST /api/v1/transfer-in`
+    pub async fn transfer_to_futures(
+        &self,
+        currency: &str,
+        amount: f64,
+    ) -> Result<TransferResponse> {
+        let resp: TransferResponse = self
+            .post(
+                "/api/v1/transfer-in",
+                &json!({
+                    "currency":      currency,
+                    "amount":        amount,
+                    "payAccountType": "MAIN",
+                }),
+            )
+            .await?;
+        info!(currency, amount, apply_id = %resp.apply_id, "transfer Main→Futures initiated");
+        Ok(resp)
+    }
+
+    /// Fetch paginated fund transfer history.
+    ///
+    /// `transfer_type` — `None` for all, `Some("TRANSFER_IN")`, or `Some("TRANSFER_OUT")`.
+    /// `currency`      — e.g. `"USDT"`. Pass `None` for all currencies.
+    /// `max_count`     — records per page, capped at 50.
+    ///
+    /// Endpoint: `GET /api/v1/transfer-list`
+    pub async fn get_transfer_list(
+        &self,
+        currency: Option<&str>,
+        transfer_type: Option<&str>,
+        max_count: u32,
+    ) -> Result<Vec<TransferRecord>> {
+        #[derive(Deserialize)]
+        #[serde(rename_all = "camelCase")]
+        struct Page {
+            items: Vec<TransferRecord>,
+        }
+        let limit = max_count.min(50).to_string();
+        let mut params: Vec<(&str, &str)> = vec![("maxCount", &limit)];
+        if let Some(c) = currency {
+            params.push(("currency", c));
+        }
+        if let Some(t) = transfer_type {
+            params.push(("type", t));
+        }
+        let page: Page = self.get("/api/v1/transfer-list", &params).await?;
+        Ok(page.items)
+    }
+
+    // ── Margin management ─────────────────────────────────────────────────────
+
+    /// Manually add (positive `margin`) or remove (negative `margin`) isolated
+    /// margin for `symbol`.
+    ///
+    /// KuCoin requires the Futures account to be in **isolated** margin mode for
+    /// this to be effective.  The `direction` field must be `"IN"` (add) or
+    /// `"OUT"` (remove); the sign of `margin` is always positive — direction
+    /// is encoded separately.
+    ///
+    /// Endpoint: `POST /api/v1/position/changeMargin`
+    pub async fn add_position_margin(
+        &self,
+        symbol: &str,
+        margin: f64,
+        direction: &str, // "IN" or "OUT"
+    ) -> Result<()> {
+        let resp: serde_json::Value = self
+            .post(
+                "/api/v1/position/changeMargin",
+                &json!({
+                    "symbol":    symbol,
+                    "margin":    margin,
+                    "direction": direction,
+                }),
+            )
+            .await?;
+        info!(symbol, margin, direction, resp = %resp, "position margin updated");
+        Ok(())
+    }
+
+    // ── Account overview — all currencies ────────────────────────────────────
+
+    /// Fetch account balances for **all** currencies at once.
+    ///
+    /// Equivalent to calling `get_account_overview` for every currency the
+    /// account holds, but in a single round-trip.
+    ///
+    /// Endpoint: `GET /api/v2/account-overview-all`
+    pub async fn get_account_overview_all(&self) -> Result<Vec<AccountOverview>> {
+        #[derive(Deserialize)]
+        #[serde(rename_all = "camelCase")]
+        struct Wrapper {
+            summary: Vec<AccountOverview>,
+        }
+        let w: Wrapper = self.get("/api/v2/account-overview-all", &[]).await?;
+        debug!(count = w.summary.len(), "fetched all account overviews");
+        Ok(w.summary)
+    }
+}
+
+// ── Transfer types ────────────────────────────────────────────────────────────
+
+/// Response from `POST /api/v1/transfer-out` and `POST /api/v1/transfer-in`.
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TransferResponse {
+    /// Exchange-assigned transfer application ID for status tracking.
+    pub apply_id: String,
+}
+
+/// A single transfer record from `GET /api/v1/transfer-list`.
+#[derive(Debug, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TransferRecord {
+    /// Exchange-assigned application ID.
+    pub apply_id: Option<String>,
+    /// Currency transferred (e.g. `"USDT"`).
+    pub currency: String,
+    /// Transfer status: `"PROCESSING"`, `"SUCCESS"`, or `"FAILURE"`.
+    pub status: Option<String>,
+    /// `"TRANSFER_OUT"` (Futures→Main) or `"TRANSFER_IN"` (Main→Futures).
+    #[serde(rename = "type")]
+    pub transfer_type: Option<String>,
+    /// Amount transferred as a decimal string.
+    pub amount: Option<f64>,
+    /// Unix timestamp when the transfer was created (milliseconds).
+    pub created_at: Option<i64>,
 }
