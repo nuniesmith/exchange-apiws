@@ -37,6 +37,9 @@ pub struct WsToken {
 #[derive(Debug, Serialize, Deserialize)]
 pub struct WsMessage {
     /// Client-generated unique ID for request/response correlation.
+    /// Absent on market-data pushes; only present on control frames
+    /// (subscribe, ping, pong, welcome, ack).
+    #[serde(default, skip_serializing_if = "String::is_empty")]
     pub id: String,
     #[serde(rename = "type")]
     /// Message type — e.g. `"subscribe"`, `"message"`, `"ping"`, `"welcome"`.
