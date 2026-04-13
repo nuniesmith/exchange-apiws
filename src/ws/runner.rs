@@ -29,7 +29,7 @@
 //!
 //! #[tokio::main]
 //! async fn main() -> exchange_apiws::Result<()> {
-//!     let client = KuCoinClient::new(Credentials::from_env()?, KucoinEnv::LiveFutures);
+//!     let client = KuCoinClient::new(Credentials::from_env()?, KucoinEnv::LiveFutures)?;
 //!     let token  = client.get_ws_token_public().await?;
 //!     let conn   = Arc::new(KucoinConnector::new(&token, KucoinEnv::LiveFutures)?);
 //!

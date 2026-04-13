@@ -53,7 +53,7 @@ use crate::ws::types::{WsMessage, WsToken};
 /// # async fn example() -> exchange_apiws::Result<()> {
 /// // Preferred: use the KuCoin builder
 /// let kucoin = KuCoin::futures(Credentials::from_env()?);
-/// let client = kucoin.rest_client();
+/// let client = kucoin.rest_client()?;
 /// let token  = client.get_ws_token_public().await?;
 /// let connector = KucoinConnector::new(&token, kucoin.env())?;
 /// # Ok(())
