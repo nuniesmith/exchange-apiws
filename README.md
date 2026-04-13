@@ -18,30 +18,37 @@ Async Rust client for exchange REST APIs and WebSocket feeds.
 |--------|----------|
 | `get_balance(currency)` | `GET /api/v1/account-overview` |
 | `get_account_overview(currency)` | `GET /api/v1/account-overview` |
+| `get_account_overview_all()` | `GET /api/v2/account-overview-all` |
 | `get_position(symbol)` | `GET /api/v1/position` |
 | `get_all_positions()` | `GET /api/v1/positions` |
+| `add_position_margin(symbol, margin, direction)` | `POST /api/v1/position/changeMargin` |
+| `set_auto_deposit(symbol, bool)` | `POST /api/v1/position/changeAutoDeposit` |
+| `set_risk_limit_level(symbol, level)` | `POST /api/v1/position/risk-limit-level/change` |
+| `get_risk_limit_levels(symbol)` | `GET /api/v1/contracts/risk-limit/{symbol}` |
 | `fetch_klines(symbol, limit, granularity)` | `GET /api/v1/kline/query` |
 | `fetch_klines_extended(...)` | paginated kline fetch |
 | `get_orderbook_snapshot(symbol)` | `GET /api/v1/level2/snapshot` |
 | `get_funding_rate(symbol)` | `GET /api/v1/funding-rate/{symbol}/current` |
+| `get_funding_history(symbol, max_count)` | `GET /api/v1/funding-history` |
 | `get_mark_price(symbol)` | `GET /api/v1/mark-price/{symbol}/current` |
 | `get_active_contracts()` | `GET /api/v1/contracts/active` |
 | `get_contract(symbol)` | `GET /api/v1/contracts/{symbol}` |
 | `get_ticker(symbol)` | `GET /api/v1/ticker` |
-| `get_risk_limit_levels(symbol)` | `GET /api/v1/contracts/risk-limit/{symbol}` |
-| `get_funding_history(symbol, max_count)` | `GET /api/v1/funding-history` |
 | `place_order(...)` | `POST /api/v1/orders` |
 | `close_position(symbol, qty, leverage)` | `POST /api/v1/orders` |
 | `cancel_order(order_id)` | `DELETE /api/v1/orders/{id}` |
 | `cancel_all_orders(symbol)` | `DELETE /api/v1/orders?symbol=…` |
 | `get_open_orders(symbol)` | `GET /api/v1/orders?status=active` |
+| `get_done_orders(symbol, max_count)` | `GET /api/v1/orders?status=done` |
 | `get_order(order_id)` | `GET /api/v1/orders/{id}` |
 | `get_recent_fills(symbol)` | `GET /api/v1/recentFills` |
 | `place_stop_order(...)` | `POST /api/v1/stopOrders` |
 | `cancel_stop_order(order_id)` | `DELETE /api/v1/stopOrders/{id}` |
 | `cancel_all_stop_orders(symbol)` | `DELETE /api/v1/stopOrders?symbol=…` |
-| `set_auto_deposit(symbol, bool)` | `POST /api/v1/position/changeAutoDeposit` |
-| `set_risk_limit_level(symbol, level)` | `POST /api/v1/position/risk-limit-level/change` |
+| `get_open_stop_orders(symbol)` | `GET /api/v1/stopOrders?status=active` |
+| `transfer_to_main(currency, amount)` | `POST /api/v1/transfer-out` |
+| `transfer_to_futures(currency, amount)` | `POST /api/v1/transfer-in` |
+| `get_transfer_list(currency, transfer_type, max_count)` | `GET /api/v1/transfer-list` |
 
 ### KuCoin — WebSocket
 
@@ -82,11 +89,11 @@ KC_PASSPHRASE=your_passphrase
 ### REST
 
 ```rust
-use exchange_apiws::{Credentials, KuCoinClient, KucoinEnv};
+use exchange_apiws::{Credentials, KuCoin};
 
 #[tokio::main]
 async fn main() -> exchange_apiws::Result<()> {
-    let client = KuCoinClient::new(Credentials::from_env()?, KucoinEnv::LiveFutures);
+    let client = KuCoin::futures(Credentials::from_env()?).rest_client()?;
 
     let balance  = client.get_balance("USDT").await?;
     let position = client.get_position("XBTUSDTM").await?;
@@ -103,14 +110,15 @@ async fn main() -> exchange_apiws::Result<()> {
 ```rust
 use std::sync::Arc;
 use tokio::sync::{mpsc, watch};
-use exchange_apiws::{Credentials, KuCoinClient, KucoinEnv, actors::DataMessage};
+use exchange_apiws::{Credentials, KuCoin, actors::DataMessage};
 use exchange_apiws::ws::{KucoinConnector, WsRunnerConfig, run_feed};
 
 #[tokio::main]
 async fn main() -> exchange_apiws::Result<()> {
-    let client = KuCoinClient::new(Credentials::from_env()?, KucoinEnv::LiveFutures);
+    let kucoin = KuCoin::futures(Credentials::from_env()?);
+    let client = kucoin.rest_client()?;
     let token  = client.get_ws_token_public().await?;
-    let conn   = Arc::new(KucoinConnector::new(&token, KucoinEnv::LiveFutures)?);
+    let conn   = Arc::new(KucoinConnector::new(&token, kucoin.env())?);
 
     let subs = vec![
         conn.trade_subscription("XBTUSDTM").unwrap(),
@@ -132,6 +140,7 @@ async fn main() -> exchange_apiws::Result<()> {
     while let Some(msg) = rx.recv().await {
         println!("{msg:?}");
     }
+    let _ = shutdown_tx.send(true);
     Ok(())
 }
 ```
@@ -140,8 +149,10 @@ async fn main() -> exchange_apiws::Result<()> {
 
 ```rust
 // Use get_ws_token_private() and add private subscriptions:
-let token = client.get_ws_token_private().await?;
-let conn  = Arc::new(KucoinConnector::new(&token, KucoinEnv::LiveFutures)?);
+let kucoin = KuCoin::futures(Credentials::from_env()?);
+let client = kucoin.rest_client()?;
+let token  = client.get_ws_token_private().await?;
+let conn   = Arc::new(KucoinConnector::new(&token, kucoin.env())?);
 
 let subs = vec![
     conn.order_updates_subscription().unwrap(),   // fills & status changes
@@ -153,17 +164,18 @@ let subs = vec![
 
 ### Contract sizing
 
-```rust
-use exchange_apiws::rest::calc_contracts;
+`calc_contracts` is an async method on `KuCoinClient` — it calls `GET /api/v1/contracts/{symbol}` to retrieve the contract multiplier at runtime, so it returns a `Result`.
 
-let contracts = calc_contracts(
+```rust
+let client    = KuCoin::futures(Credentials::from_env()?).rest_client()?;
+let contracts = client.calc_contracts(
     "XBTUSDTM",
     96_000.0,   // current price
     1_000.0,    // available balance (USDT)
     10,         // leverage
     0.02,       // risk 2% of balance
     50,         // max contracts cap
-);
+).await?;
 println!("{contracts} contracts");
 ```
 
@@ -249,7 +261,7 @@ Credentials are loaded from environment variables with `Credentials::from_env()`
 
 **Leverage** is a per-order field in KuCoin Futures, not an account setting. Pass `leverage` in `place_order` and `close_position`. Use `set_risk_limit_level` to change the max position size tier.
 
-**Inverse vs. linear contracts** — `calc_contracts` uses a built-in `contract_value` table. Inverse (USD-margined) contracts like `XBTUSDM` have a multiplier of 1 USD. Linear (USDT-margined) contracts like `XBTUSDTM` express a base-coin multiplier (0.001 BTC per contract).
+**Inverse vs. linear contracts** — `calc_contracts` fetches the contract multiplier live via `get_contract`. Inverse (USD-margined) contracts like `XBTUSDM` have a multiplier of 1 USD. Linear (USDT-margined) contracts like `XBTUSDTM` express a base-coin multiplier (0.001 BTC per contract).
 
 **Private WS token expiry** — WS tokens are valid for the lifetime of the connection. The runner reconnects automatically; call `get_ws_token_private()` again inside the reconnect flow if you need long-lived private feeds.
 
@@ -258,12 +270,11 @@ Credentials are loaded from environment variables with `Credentials::from_env()`
 ## Roadmap
 
 - [ ] Binance Futures REST + WS
-- [ ] OKX REST + WS  
+- [ ] OKX REST + WS
 - [ ] Bybit REST + WS
 - [ ] KuCoin Unified Trade Account (UTA) endpoints
 - [ ] KuCoin spot margin orders
 - [ ] WebSocket order placement (`wsapi.kucoin.com`)
-- [ ] Integration test suite with recorded WS frames
 
 ---
 

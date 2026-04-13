@@ -2,7 +2,7 @@
 name          = "exchange-apiws"
 version       = "0.1.7"
 edition       = "2024"
-rust-version  = "1.92.0"
+rust-version  = "1.94.1"
 authors       = ["nuniesmith"]
 license       = "MIT"
 repository    = "https://github.com/nuniesmith/exchange-apiws"
@@ -22,34 +22,34 @@ testutils = []
 [dependencies]
 # Async runtime — minimal surface: time (sleep/interval), macros (tokio::main, select!),
 # and rt-multi-thread for the default multi-core scheduler.
-tokio = { version = "1", features = ["rt-multi-thread", "macros", "time"] }
+tokio = { version = "1.51.1", features = ["rt-multi-thread", "macros", "time"] }
 
 # HTTP — use rustls so the crate builds on musl/Alpine without OpenSSL.
 # Disable default-features to drop the default OpenSSL backend.
-reqwest = { version = "0.13", default-features = false, features = ["json"] }
+reqwest = { version = "0.13.2", default-features = false, features = ["json"] }
 
 # WebSocket — rustls-tls-native-roots uses the OS trust store so wss:// works out of the box.
-tokio-tungstenite = { version = "0.26", features = ["rustls-tls-native-roots"] }
+tokio-tungstenite = { version = "0.29.0", features = ["rustls-tls-native-roots"] }
 
 # Streaming combinators (SinkExt / StreamExt) needed for the WS loop.
-futures-util = { version = "0.3", default-features = false, features = ["sink", "std"] }
+futures-util = { version = "0.3.32", default-features = false, features = ["sink", "std"] }
 
 # Serialisation
-serde      = { version = "1", features = ["derive"] }
-serde_json = "1"
+serde      = { version = "1.0.228", features = ["derive"] }
+serde_json = "1.0.149"
 
 # Error handling
-thiserror = "2"
-anyhow    = "1"
+thiserror = "2.0.18"
+anyhow    = "1.0.102"
 
 # Structured logging — zero-cost when no subscriber is installed.
-tracing = "0.1"
+tracing = "0.1.44"
 
 # Time — serde feature lets Chrono types round-trip through JSON.
-chrono = { version = "0.4", features = ["serde"] }
+chrono = { version = "0.4.44", features = ["serde"] }
 
 # Unique client-order IDs.
-uuid = { version = "1", features = ["v4"] }
+uuid = { version = "1.23.0", features = ["v4"] }
 
 # Zero credential memory on drop — prevents key material leaking in heap dumps.
 zeroize = { version = "1", features = ["derive"] }
