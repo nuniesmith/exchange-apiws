@@ -10,6 +10,21 @@ Async Rust client for exchange REST APIs and WebSocket feeds.
 
 ---
 
+## Table of Contents
+
+- [Features](#features)
+- [Installation](#installation)
+- [Quick Start](#quick-start)
+- [Placing Orders](#placing-orders)
+- [Rate Limits](#rate-limits)
+- [Error Handling](#error-handling)
+- [Authentication](#authentication)
+- [KuCoin-Specific Notes](#kucoin-specific-notes)
+- [Roadmap](#roadmap)
+- [License](#license)
+
+---
+
 ## Features
 
 ### KuCoin — REST
@@ -84,7 +99,7 @@ KC_PASSPHRASE=your_passphrase
 
 ---
 
-## Quick start
+## Quick Start
 
 ### REST
 
@@ -181,7 +196,7 @@ println!("{contracts} contracts");
 
 ---
 
-## Placing orders
+## Placing Orders
 
 ```rust
 use exchange_apiws::types::{Side, OrderType, TimeInForce, STP};
@@ -210,7 +225,7 @@ client.place_stop_order(
 
 ---
 
-## Rate limits
+## Rate Limits
 
 ### REST
 
@@ -226,7 +241,7 @@ KuCoin allows **100 client→server messages per 10 seconds per connection** (su
 
 ---
 
-## Error handling
+## Error Handling
 
 All fallible functions return `Result<T>` where the error type is `ExchangeError`:
 
@@ -257,7 +272,7 @@ Credentials are loaded from environment variables with `Credentials::from_env()`
 
 ---
 
-## KuCoin-specific notes
+## KuCoin-Specific Notes
 
 **Leverage** is a per-order field in KuCoin Futures, not an account setting. Pass `leverage` in `place_order` and `close_position`. Use `set_risk_limit_level` to change the max position size tier.
 
@@ -269,12 +284,369 @@ Credentials are loaded from environment variables with `Credentials::from_env()`
 
 ## Roadmap
 
-- [ ] Binance Futures REST + WS
-- [ ] OKX REST + WS
-- [ ] Bybit REST + WS
-- [ ] KuCoin Unified Trade Account (UTA) endpoints
-- [ ] KuCoin spot margin orders
-- [ ] WebSocket order placement (`wsapi.kucoin.com`)
+> **Exchange coverage note:** public REST and WebSocket endpoints for all exchanges are freely accessible without API keys. Authenticated endpoints are planned for Kraken and Crypto.com (spot only).
+
+### Architecture prerequisites
+
+These foundational pieces unlock everything below.
+
+#### `PublicRestClient` (`src/http.rs`)
+
+`KuCoinClient` calls `build_headers` on every request and cannot make unauthenticated calls. A new `PublicRestClient` is needed for Binance, Bybit, and the public endpoints of all other exchanges.
+
+```
+src/http.rs   (new)
+  PublicRestClient
+    - reqwest::Client (rustls, 10s timeout)
+    - base_url: String
+    - get<T: DeserializeOwned>(path, params) -> Result<T>
+    - same retry / 429-backoff logic as KuCoinClient
+    - no envelope unwrapping — caller decides shape
+```
+
+Authenticated exchanges (Kraken, Crypto.com) will wrap this client and add their own signing layer, rather than sharing KuCoinClient's KuCoin-specific HMAC path.
+
+#### Envelope trait
+
+Each exchange wraps responses differently:
+
+| Exchange | Envelope shape |
+|----------|---------------|
+| KuCoin | `{"code":"200000","data":{…}}` |
+| Binance | bare JSON — no wrapper |
+| Bybit | `{"retCode":0,"result":{…}}` |
+| Kraken | `{"result":{…},"error":[]}` |
+| Crypto.com | `{"code":0,"result":{…}}` |
+
+A small `Envelope` trait (or free function) per exchange module will unwrap each format and surface errors as `ExchangeError::Api`.
+
+#### `DataMessage` additions
+
+New feed types that don't map to existing variants:
+
+| Variant | Used by |
+|---------|---------|
+| `Candle(CandleData)` | Binance kline stream, Bybit kline, Kraken OHLC, Crypto.com candlestick |
+| `FundingRate(FundingData)` | Binance mark-price stream, Bybit ticker extended |
+
+`CandleData` fields: `symbol`, `exchange`, `interval`, `open_ts`, `open`, `high`, `low`, `close`, `volume`, `is_closed`, `receipt_ts`.
+
+---
+
+### KuCoin — remaining work
+
+#### Unified Trade Account (UTA) REST endpoints
+
+KuCoin Unified combines Spot + Futures margin in one account.
+Base URL: `https://api.kucoin.com`.
+
+| Method | Endpoint |
+|--------|----------|
+| `get_unified_account()` | `GET /api/v3/account/summary` |
+| `get_unified_margin()` | `GET /api/v3/margin/accounts` |
+| `get_cross_margin_symbols()` | `GET /api/v1/isolated/accounts` |
+
+`KucoinEnv::Unified` routing already exists in the enum — needs REST methods in `src/rest/account.rs` and wiremock coverage in `rest_mock.rs`.
+
+#### Spot margin orders (`src/rest/margin.rs`)
+
+| Method | Endpoint |
+|--------|----------|
+| `place_margin_order(symbol, side, size, price, leverage)` | `POST /api/v1/margin/order` |
+| `get_margin_order(order_id)` | `GET /api/v1/margin/orders/{id}` |
+| `cancel_margin_order(order_id)` | `DELETE /api/v1/margin/orders/{id}` |
+| `get_margin_fills(symbol)` | `GET /api/v1/margin/fills` |
+| `get_margin_balance(currency)` | `GET /api/v1/margin/account` |
+
+#### WebSocket order placement (`src/ws/orders.rs`)
+
+KuCoin's `wsapi.kucoin.com` supports placing and cancelling orders over WS for ultra-low latency. Requires a private WS token and a separate connection to `wss://wsapi.kucoin.com`.
+
+- `WsOrderClient` wrapping a tungstenite sink
+- `place_order_ws(symbol, side, size, leverage, order_type, price)` → sends JSON frame, awaits ack with matching `clientOid`
+- `cancel_order_ws(order_id)` → same pattern
+- Response matching by `clientOid` in a `HashMap<String, oneshot::Sender>`
+- Rate limit: 100 msg/10s (shared with the existing runner guard)
+
+---
+
+### Binance — public only
+
+All endpoints below are unauthenticated.
+
+#### REST (`src/binance/rest.rs`)
+
+Uses `PublicRestClient` pointed at:
+- Spot: `https://api.binance.com`
+- Futures (USDT-M): `https://fapi.binance.com`
+
+| Method | Endpoint |
+|--------|----------|
+| `get_klines(symbol, interval, limit)` | `GET /api/v3/klines` |
+| `get_orderbook(symbol, limit)` | `GET /api/v3/depth` |
+| `get_recent_trades(symbol, limit)` | `GET /api/v3/trades` |
+| `get_ticker(symbol)` | `GET /api/v3/ticker/bookTicker` |
+| `get_ticker_24h(symbol)` | `GET /api/v3/ticker/24hr` |
+| `get_exchange_info()` | `GET /api/v3/exchangeInfo` |
+| `get_futures_klines(symbol, interval, limit)` | `GET /fapi/v1/klines` |
+| `get_futures_funding_rate(symbol)` | `GET /fapi/v1/fundingRate` |
+| `get_futures_mark_price(symbol)` | `GET /fapi/v1/premiumIndex` |
+| `get_futures_open_interest(symbol)` | `GET /fapi/v1/openInterest` |
+
+Responses are bare JSON arrays/objects with no envelope wrapper.
+
+#### WebSocket (`src/binance/ws.rs`)
+
+Implements `ExchangeConnector`. Binance WS uses URL-encoded stream names rather than post-connect subscription messages.
+
+Base URLs:
+- Spot: `wss://stream.binance.com:9443/ws/<streamName>`
+- Spot combined: `wss://stream.binance.com:9443/stream?streams=<a>/<b>`
+- Futures: `wss://fstream.binance.com/ws/<streamName>`
+
+| Subscription helper | Stream name | DataMessage |
+|---------------------|-------------|-------------|
+| `trade_subscription(symbol)` | `<symbol>@aggTrade` | `Trade` |
+| `ticker_subscription(symbol)` | `<symbol>@bookTicker` | `Ticker` |
+| `kline_subscription(symbol, interval)` | `<symbol>@kline_<interval>` | `Candle` |
+| `depth_subscription(symbol)` | `<symbol>@depth@100ms` | `OrderBook` (delta) |
+| `depth_snapshot_subscription(symbol, levels)` | `<symbol>@depth{5\|10\|20}@100ms` | `OrderBook` (snapshot) |
+| `mark_price_subscription(symbol)` *(futures)* | `<symbol>@markPrice@1s` | `FundingRate` |
+
+Ping: Binance sends a ping frame — runner responds with pong. No application-level ping needed.
+
+---
+
+### Bybit — public only
+
+All endpoints below are unauthenticated.
+
+#### REST (`src/bybit/rest.rs`)
+
+Uses `PublicRestClient` pointed at `https://api.bybit.com`.
+
+| Method | Endpoint |
+|--------|----------|
+| `get_klines(category, symbol, interval, limit)` | `GET /v5/market/kline` |
+| `get_orderbook(category, symbol, limit)` | `GET /v5/market/orderbook` |
+| `get_tickers(category, symbol)` | `GET /v5/market/tickers` |
+| `get_recent_trades(category, symbol, limit)` | `GET /v5/market/recent-trade` |
+| `get_instruments(category)` | `GET /v5/market/instruments-info` |
+| `get_funding_rate(symbol)` | `GET /v5/market/funding/history` |
+| `get_open_interest(symbol, interval)` | `GET /v5/market/open-interest` |
+| `get_long_short_ratio(symbol, period)` | `GET /v5/market/account-ratio` |
+
+`category` values: `"spot"`, `"linear"` (USDT perp), `"inverse"`.
+Envelope: `{"retCode":0,"result":{…}}` — non-zero `retCode` surfaces as `ExchangeError::Api`.
+
+#### WebSocket (`src/bybit/ws.rs`)
+
+Implements `ExchangeConnector`.
+
+Base URLs:
+- Spot public: `wss://stream.bybit.com/v5/public/spot`
+- Linear public: `wss://stream.bybit.com/v5/public/linear`
+- Inverse public: `wss://stream.bybit.com/v5/public/inverse`
+
+Subscription message format (sent after connect):
+```json
+{"op":"subscribe","args":["orderbook.50.BTCUSDT"]}
+```
+
+Ping: send `{"op":"ping"}` every 20 s; server responds `{"op":"pong"}`.
+
+| Subscription helper | Topic arg | DataMessage |
+|---------------------|-----------|-------------|
+| `trade_subscription(symbol)` | `publicTrade.<symbol>` | `Trade` |
+| `ticker_subscription(symbol)` | `tickers.<symbol>` | `Ticker` |
+| `kline_subscription(symbol, interval)` | `kline.<interval>.<symbol>` | `Candle` |
+| `orderbook_subscription(symbol, depth)` | `orderbook.<depth>.<symbol>` | `OrderBook` |
+
+Note: the first `orderbook.*` message is a snapshot (`type:"snapshot"`); subsequent messages are deltas (`type:"delta"`). Set `is_snapshot` accordingly in `parse_message`.
+
+---
+
+### Kraken — spot, authenticated
+
+Signing: HMAC-SHA512 over `URI + SHA256(nonce + encoded_body)`, base64-encoded, sent as `API-Sign` alongside `API-Key`. Add `src/kraken/auth.rs` (separate from the KuCoin-specific `src/auth.rs`).
+
+#### Public REST (`src/kraken/rest.rs`)
+
+Base URL: `https://api.kraken.com`.
+
+| Method | Endpoint |
+|--------|----------|
+| `get_assets()` | `GET /0/public/Assets` |
+| `get_asset_pairs(pair)` | `GET /0/public/AssetPairs` |
+| `get_ticker(pair)` | `GET /0/public/Ticker` |
+| `get_ohlc(pair, interval)` | `GET /0/public/OHLC` |
+| `get_orderbook(pair, count)` | `GET /0/public/Depth` |
+| `get_recent_trades(pair)` | `GET /0/public/Trades` |
+| `get_spread(pair)` | `GET /0/public/Spread` |
+| `get_system_status()` | `GET /0/public/SystemStatus` |
+
+Envelope: `{"result":{…},"error":[]}` — non-empty `error` array surfaces as `ExchangeError::Api`.
+
+#### Private REST (authenticated)
+
+| Method | Endpoint |
+|--------|----------|
+| `get_balance()` | `POST /0/private/Balance` |
+| `get_open_orders()` | `POST /0/private/OpenOrders` |
+| `get_closed_orders()` | `POST /0/private/ClosedOrders` |
+| `place_order(pair, side, order_type, volume, price)` | `POST /0/private/AddOrder` |
+| `cancel_order(txid)` | `POST /0/private/CancelOrder` |
+| `cancel_all_orders()` | `POST /0/private/CancelAll` |
+| `get_trades_history()` | `POST /0/private/TradesHistory` |
+| `get_ledger(asset)` | `POST /0/private/Ledgers` |
+| `withdraw(asset, key, amount)` | `POST /0/private/Withdraw` |
+| `get_withdrawal_status(asset)` | `POST /0/private/WithdrawStatus` |
+
+#### WebSocket (`src/kraken/ws.rs`)
+
+Implements `ExchangeConnector`.
+
+Base URLs:
+- Public: `wss://ws.kraken.com/v2`
+- Private: `wss://ws-auth.kraken.com/v2`
+
+Ping: send `{"method":"ping"}` every 30 s.
+
+Subscribe message format:
+```json
+{"method":"subscribe","params":{"channel":"ticker","symbol":["BTC/USD"]}}
+```
+
+| Subscription helper | Channel | DataMessage |
+|---------------------|---------|-------------|
+| `trade_subscription(pair)` | `trade` | `Trade` |
+| `ticker_subscription(pair)` | `ticker` | `Ticker` |
+| `ohlc_subscription(pair, interval)` | `ohlc` | `Candle` |
+| `orderbook_subscription(pair, depth)` | `book` | `OrderBook` |
+| `order_updates_subscription()` ⚑ | `executions` | `OrderUpdate` |
+| `balance_subscription()` ⚑ | `balances` | `BalanceUpdate` |
+
+⚑ Private channel — requires a WS auth token from `POST /0/private/GetWebSocketsToken`.
+
+---
+
+### Crypto.com — spot, authenticated
+
+Signing: HMAC-SHA256 over a deterministic parameter string, sent as a `sig` field in the request body (not a header). Add `src/cryptocom/auth.rs`.
+
+#### Public REST (`src/cryptocom/rest.rs`)
+
+Base URL: `https://api.crypto.com/exchange/v1`.
+
+| Method | Endpoint |
+|--------|----------|
+| `get_instruments()` | `GET /public/get-instruments` |
+| `get_orderbook(instrument, depth)` | `GET /public/get-book` |
+| `get_candlestick(instrument, timeframe)` | `GET /public/get-candlestick` |
+| `get_ticker(instrument)` | `GET /public/get-ticker` |
+| `get_recent_trades(instrument)` | `GET /public/get-trades` |
+| `get_funding_rate(instrument)` | `GET /public/get-valuations` |
+
+Envelope: `{"code":0,"result":{…}}` — non-zero `code` surfaces as `ExchangeError::Api`.
+
+#### Private REST (authenticated)
+
+| Method | Endpoint |
+|--------|----------|
+| `get_account_summary(currency)` | `POST /private/get-account-summary` |
+| `place_order(instrument, side, type, quantity, price)` | `POST /private/create-order` |
+| `cancel_order(order_id)` | `POST /private/cancel-order` |
+| `cancel_all_orders(instrument)` | `POST /private/cancel-all-orders` |
+| `get_open_orders(instrument)` | `POST /private/get-open-orders` |
+| `get_order_detail(order_id)` | `POST /private/get-order-detail` |
+| `get_trades(instrument)` | `POST /private/get-trades` |
+| `get_deposit_address(currency)` | `POST /private/get-deposit-address` |
+| `create_withdrawal(currency, amount, address)` | `POST /private/create-withdrawal` |
+| `get_withdrawal_history(currency)` | `POST /private/get-withdrawal-history` |
+
+#### WebSocket (`src/cryptocom/ws.rs`)
+
+Implements `ExchangeConnector`.
+
+Base URLs:
+- Public: `wss://stream.crypto.com/exchange/v1/market`
+- Private: `wss://stream.crypto.com/exchange/v1/user`
+
+Ping: send `{"method":"public/heartbeat"}` every 30 s; respond to the server heartbeat with `{"method":"public/respond-heartbeat","id":<same_id>}`.
+
+Subscribe message format:
+```json
+{"id":1,"method":"subscribe","params":{"channels":["book.BTC_USDT.10"]}}
+```
+
+| Subscription helper | Channel pattern | DataMessage |
+|---------------------|-----------------|-------------|
+| `trade_subscription(instrument)` | `trade.<instrument>` | `Trade` |
+| `ticker_subscription(instrument)` | `ticker.<instrument>` | `Ticker` |
+| `kline_subscription(instrument, timeframe)` | `candlestick.<tf>.<instrument>` | `Candle` |
+| `orderbook_subscription(instrument, depth)` | `book.<instrument>.<depth>` | `OrderBook` |
+| `order_updates_subscription()` ⚑ | `user.order.<instrument>` | `OrderUpdate` |
+| `balance_subscription()` ⚑ | `user.balance` | `BalanceUpdate` |
+
+⚑ Private — connect to the private WS URL with a signed auth frame sent immediately after connect.
+
+---
+
+### Implementation order
+
+| Step | Work item |
+|------|-----------|
+| 1 | `PublicRestClient` + `Envelope` trait |
+| 2 | `DataMessage::Candle` + `DataMessage::FundingRate` variants |
+| 3 | Binance public REST + WS |
+| 4 | Bybit public REST + WS |
+| 5 | KuCoin UTA + spot margin REST |
+| 6 | KuCoin WS order placement |
+| 7 | Kraken public REST + WS |
+| 8 | Kraken private REST + private WS |
+| 9 | Crypto.com public REST + WS |
+| 10 | Crypto.com private REST + private WS |
+
+### Target file layout
+
+```
+src/
+├── http.rs              (new) PublicRestClient
+├── binance/
+│   ├── mod.rs
+│   ├── rest.rs
+│   └── ws.rs
+├── bybit/
+│   ├── mod.rs
+│   ├── rest.rs
+│   └── ws.rs
+├── kraken/
+│   ├── mod.rs
+│   ├── auth.rs
+│   ├── rest.rs
+│   └── ws.rs
+├── cryptocom/
+│   ├── mod.rs
+│   ├── auth.rs
+│   ├── rest.rs
+│   └── ws.rs
+├── rest/               (existing — KuCoin)
+│   ├── account.rs      + UTA endpoints
+│   ├── margin.rs       (new) KuCoin spot margin
+│   ├── market.rs
+│   ├── mod.rs
+│   └── orders.rs
+└── ws/                 (existing — KuCoin)
+    ├── orders.rs       (new) WS order placement
+    └── …
+tests/
+├── binance_rest.rs     (new)
+├── bybit_rest.rs       (new)
+├── kraken_rest.rs      (new)
+├── cryptocom_rest.rs   (new)
+├── rest_mock.rs        (existing — extend for margin, UTA)
+└── ws_types.rs         (existing)
+```
 
 ---
 
