@@ -46,7 +46,7 @@ anyhow    = "1.0.102"
 tracing = "0.1.44"
 
 # Time — serde feature lets Chrono types round-trip through JSON.
-chrono = { version = "0.4.44", features = ["serde"] }
+chrono = { version = "=0.4.41", features = ["serde"] }
 
 # Unique client-order IDs.
 uuid = { version = "1.23.0", features = ["v4"] }
