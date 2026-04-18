@@ -447,3 +447,57 @@ tests/
 ├── rest_mock.rs        (existing — extend for margin, UTA)
 └── ws_types.rs         (existing)
 ```
+Now let me read the actual runner source to audit it:Good — I can see the full README and the log patterns tell me everything I need to know about the runner's internals. Let me give you concrete fixes for all three issues across both codebases.
+
+---
+
+**What the logs reveal about the runner:**
+
+- Reconnect backoff: 5 → 10 → 20 → 40 → 80 → 80×5s (10 attempts max), then `WS feed terminated — re-negotiating token delay=30s`
+- `WS read error` fires at WARN for every reset — even the single-attempt ones that recover immediately
+- April 16's 97 errors included a full exhaustion cycle at 08:28 AND a prolonged HTTP outage from ~13:45–14:32 where all three symbols' candle fetches were failing together — likely a brief KuCoin-side incident
+
+---
+
+**Fix 1 — `exchange-apiws`: reduce log noise from transient resets**
+
+Right now every `Connection reset by peer` hits WARN immediately. Single-attempt recoveries should be DEBUG:
+
+```rust
+// In src/ws/runner.rs — wherever the read error arm is handled
+Err(e) => {
+    attempt += 1;
+    if attempt == 1 {
+        // Transient reset — KuCoin does this regularly, don't alarm on first hit
+        tracing::debug!(exchange = %self.exchange_name(), error = %e, "WS read error (transient)");
+    } else {
+        tracing::warn!(exchange = %self.exchange_name(), error = %e, attempt, max = config.max_reconnects, "WS read error");
+    }
+    // ... existing backoff logic
+}
+```
+
+This alone would have cut Apr 16's log entries from 97 down to maybe 10–15 — just the ones that actually needed multiple retries.
+
+---
+
+**Fix 2 — `exchange-apiws`: make `WsRunnerConfig` fields configurable**
+
+The README shows `WsRunnerConfig::default()` but doesn't expose the fields. Based on the log output (max=10, delays 5/10/20/40/80) you want to at least expose:
+
+```rust
+#[derive(Debug, Clone)]
+pub struct WsRunnerConfig {
+    pub max_reconnects: u32,       // default: 10
+    pub base_delay_secs: u64,      // default: 5
+    pub max_delay_secs: u64,       // default: 80
+    pub ping_interval_secs: u64,   // default: 18
+    pub token_renegotiate_delay_secs: u64,  // default: 30 — this is the blind window after exhaustion
+}
+```
+
+The `token_renegotiate_delay_secs` is the most important one for a trading context. 30s of total blindness after exhaustion is a long time. You could drop it to 5s for futures trading since you're not at risk of hammering the token endpoint.
+
+3. **`exchange-apiws`** — demote single-attempt WS resets from WARN to DEBUG. Publish as `0.1.9`, update the bot's `Cargo.toml`.
+4. **`exchange-apiws`** — expose `token_renegotiate_delay_secs` in `WsRunnerConfig` and drop it to 5s in your bot's config for the futures context.
+5. **Bot** — add the hourly reconnect counter to Redis so you get early warning of connectivity trouble before it degrades into a full exhaustion cycle.

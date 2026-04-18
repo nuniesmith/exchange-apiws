@@ -72,8 +72,16 @@ use crate::ws::types::WsMessage;
 pub struct WsRunnerConfig {
     /// How often to send an application-level KuCoin ping (seconds).
     pub ping_interval_secs: u64,
-    /// Base reconnect delay (seconds). Doubles on each attempt, capped at 16×.
+    /// Base reconnect delay (seconds). Doubles on each attempt up to
+    /// [`max_reconnect_delay_secs`].
     pub reconnect_delay_secs: u64,
+    /// Hard ceiling on the per-attempt reconnect delay (seconds).
+    ///
+    /// Defaults to 80 s (16× the 5 s base). Lower this for latency-sensitive
+    /// contexts — e.g. set to 30 s for a futures trading bot so a prolonged
+    /// outage re-tries every 30 s rather than every 80 s once the backoff
+    /// saturates.
+    pub max_reconnect_delay_secs: u64,
     /// Give up and return [`ExchangeError::WsDisconnected`] after this many
     /// consecutive failed reconnect attempts. Set to `u32::MAX` to retry forever.
     pub max_reconnect_attempts: u32,
@@ -84,6 +92,7 @@ impl Default for WsRunnerConfig {
         Self {
             ping_interval_secs: 20,
             reconnect_delay_secs: 5,
+            max_reconnect_delay_secs: 80,
             max_reconnect_attempts: 10,
         }
     }
@@ -193,8 +202,12 @@ pub async fn run_feed(
 
     loop {
         if attempts > 0 {
-            let exp = (attempts - 1).min(4); // cap at 16× base delay
-            let delay = config.reconnect_delay_secs.saturating_mul(1 << exp);
+            // Exponential backoff capped at config.max_reconnect_delay_secs.
+            let exp = (attempts - 1).min(63); // guard against overflow on shift
+            let delay = config
+                .reconnect_delay_secs
+                .saturating_mul(1u64 << exp.min(4)) // double each step
+                .min(config.max_reconnect_delay_secs);
             warn!(
                 attempt = attempts,
                 max = config.max_reconnect_attempts,
@@ -213,6 +226,7 @@ pub async fn run_feed(
             tx.clone(),
             &config,
             &mut shutdown,
+            attempts,
         )
         .await;
 
@@ -274,6 +288,7 @@ async fn single_session(
     tx: mpsc::Sender<DataMessage>,
     config: &WsRunnerConfig,
     shutdown: &mut watch::Receiver<bool>,
+    attempt: u32,
 ) -> SessionOutcome {
     info!(url, exchange = connector.exchange_name(), "WS connecting");
 
@@ -352,7 +367,17 @@ async fn single_session(
                     }
                     Some(Ok(_)) => {} // Pong / other frame variants — no action
                     Some(Err(e)) => {
-                        warn!(error = %e, "WS read error");
+                        // KuCoin periodically resets connections as part of
+                        // normal server maintenance. A first-attempt drop is
+                        // not worth alarming on — it almost always recovers
+                        // immediately.  Only escalate to WARN once we've
+                        // already retried at least once, signalling a
+                        // persistent problem rather than a routine rotation.
+                        if attempt == 0 {
+                            debug!(error = %e, exchange = connector.exchange_name(), "WS read error");
+                        } else {
+                            warn!(error = %e, attempt, exchange = connector.exchange_name(), "WS read error");
+                        }
                         return SessionOutcome::Disconnected;
                     }
                     None => {

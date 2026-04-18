@@ -113,6 +113,7 @@ fn fast_config(max_reconnect_attempts: u32) -> WsRunnerConfig {
     WsRunnerConfig {
         ping_interval_secs: 60,
         reconnect_delay_secs: 0,
+        max_reconnect_delay_secs: 80,
         max_reconnect_attempts,
     }
 }
