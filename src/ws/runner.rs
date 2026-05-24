@@ -52,6 +52,7 @@
 //! ```
 
 use std::collections::VecDeque;
+use std::future::Future;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
@@ -399,6 +400,271 @@ async fn single_session(
                 }
                 debug!(exchange = connector.exchange_name(), "sent ping");
             }
+        }
+    }
+}
+
+// ── Supervised feed (token-refresh) ───────────────────────────────────────────
+
+/// Endpoint returned by a token-refresh callback for [`run_feed_supervised`].
+///
+/// Pairs a fresh WSS URL with the subscription messages that should be sent
+/// on the new session. Both must be returned together because some exchanges
+/// embed connection-scoped IDs in their subscription frames.
+#[derive(Debug, Clone)]
+pub struct WsFeedEndpoint {
+    /// Full WSS URL including any token / connectId query parameters.
+    pub url: String,
+    /// Subscription messages to send immediately after the new connection
+    /// is established.
+    pub subscriptions: Vec<String>,
+}
+
+/// Tuning parameters for [`run_feed_supervised`].
+///
+/// The supervisor wraps [`run_feed`] in an outer loop that refreshes the WS
+/// token when the inner runner exhausts its per-cycle reconnect budget. The
+/// inner budget (`runner.max_reconnect_attempts`) should be set low enough
+/// to detect a stale-token cascade quickly — typically 3 attempts — because
+/// a fresh token usually restores the feed in one shot.
+#[derive(Debug, Clone)]
+pub struct SupervisedConfig {
+    /// Inner-runner configuration.
+    ///
+    /// `runner.max_reconnect_attempts` is the **per-cycle** ceiling. When the
+    /// inner [`run_feed`] returns [`ExchangeError::WsDisconnected`] after
+    /// this many attempts, the supervisor calls the refresh closure and
+    /// starts a new cycle. Defaults to 3 (down from the bare-runner default
+    /// of 10) so cascades are detected in roughly 35 s rather than 9 min.
+    pub runner: WsRunnerConfig,
+    /// Maximum number of refresh cycles before giving up.
+    ///
+    /// Default: `u32::MAX` (effectively unlimited; rely on the caller's
+    /// shutdown signal). Set this lower if you want the supervisor to
+    /// surface a fatal `WsDisconnected` to the caller after a bounded number
+    /// of refresh attempts.
+    pub max_refresh_cycles: u32,
+    /// Delay before invoking the refresh closure after a cycle exhausts.
+    ///
+    /// Default: 5 s. Prevents tight loops if the refresh endpoint is also
+    /// failing, and gives the exchange a brief breather before the new
+    /// session begins.
+    pub refresh_delay_secs: u64,
+}
+
+impl Default for SupervisedConfig {
+    fn default() -> Self {
+        Self {
+            runner: WsRunnerConfig {
+                max_reconnect_attempts: 3,
+                ..WsRunnerConfig::default()
+            },
+            max_refresh_cycles: u32::MAX,
+            refresh_delay_secs: 5,
+        }
+    }
+}
+
+impl SupervisedConfig {
+    /// Build a supervised config from an existing [`WsRunnerConfig`].
+    ///
+    /// Preserves all runner fields, then overrides `max_reconnect_attempts`
+    /// to 3 if it is still at the bare-runner default of 10 — supervised
+    /// callers almost always want the lower per-cycle ceiling.
+    pub fn from_runner(mut runner: WsRunnerConfig) -> Self {
+        if runner.max_reconnect_attempts == WsRunnerConfig::default().max_reconnect_attempts {
+            runner.max_reconnect_attempts = 3;
+        }
+        Self {
+            runner,
+            max_refresh_cycles: u32::MAX,
+            refresh_delay_secs: 5,
+        }
+    }
+}
+
+/// Drive a WebSocket feed with automatic token re-negotiation on cascade failure.
+///
+/// Behaves like [`run_feed`], but when the inner runner exhausts its
+/// reconnect budget the supervisor invokes `refresh` to obtain a fresh
+/// [`WsFeedEndpoint`] and starts a new cycle. Use this when the suspected
+/// disconnect cause is token invalidation — refreshing the token usually
+/// restores the feed in seconds, whereas the bare runner would retry the
+/// dead endpoint for `max_reconnect_attempts × max_reconnect_delay_secs`
+/// (up to ~9 min with defaults).
+///
+/// # Arguments
+/// - `connector` — Connector used to parse incoming frames. The connector is
+///   re-used across cycles; only the URL and subscription messages change.
+/// - `tx`        — Downstream channel for parsed messages.
+/// - `config`    — Per-cycle reconnect budget and refresh settings.
+/// - `shutdown`  — Send `true` to request a graceful close (honoured both
+///   inside [`run_feed`] and while waiting for the next refresh).
+/// - `refresh`   — Async closure that returns a fresh [`WsFeedEndpoint`].
+///   Called once on entry to bootstrap the first session, then again after
+///   every exhausted cycle.
+///
+/// # Returns
+/// `Ok(())` on clean shutdown.
+/// `Err(ExchangeError::WsDisconnected)` if `max_refresh_cycles` is reached.
+/// `Err(_)` if the refresh closure itself fails (e.g. the REST endpoint is
+/// unreachable) — the error is propagated unchanged.
+///
+/// # Example
+///
+/// ```no_run
+/// use std::sync::Arc;
+/// use tokio::sync::{mpsc, watch};
+/// use exchange_apiws::{Credentials, KuCoin};
+/// use exchange_apiws::actors::{DataMessage, ExchangeConnector};
+/// use exchange_apiws::ws::{KucoinConnector, SupervisedConfig, WsFeedEndpoint, run_feed_supervised};
+///
+/// # async fn example() -> exchange_apiws::Result<()> {
+/// let kucoin = KuCoin::futures(Credentials::from_env()?);
+/// let client = Arc::new(kucoin.rest_client()?);
+/// let env    = kucoin.env();
+///
+/// // The connector is fixed; only URL + subscriptions are refreshed.
+/// let initial_token = client.get_ws_token_public().await?;
+/// let connector = Arc::new(KucoinConnector::new(&initial_token, env)?);
+///
+/// // Closure called on bootstrap and after every cascade.
+/// let refresh = {
+///     let client = client.clone();
+///     move || {
+///         let client = client.clone();
+///         async move {
+///             let token = client.get_ws_token_public().await?;
+///             let conn  = KucoinConnector::new(&token, env)?;
+///             let subs  = vec![
+///                 conn.trade_subscription("XBTUSDTM").unwrap(),
+///                 conn.ticker_subscription("XBTUSDTM").unwrap(),
+///             ];
+///             Ok(WsFeedEndpoint { url: conn.ws_url().to_string(), subscriptions: subs })
+///         }
+///     }
+/// };
+///
+/// let (tx, mut rx)               = mpsc::channel::<DataMessage>(1024);
+/// let (shutdown_tx, shutdown_rx) = watch::channel(false);
+///
+/// tokio::spawn(run_feed_supervised(
+///     connector,
+///     tx,
+///     SupervisedConfig::default(),
+///     shutdown_rx,
+///     refresh,
+/// ));
+///
+/// while let Some(msg) = rx.recv().await { println!("{msg:?}"); }
+/// let _ = shutdown_tx.send(true);
+/// # Ok(())
+/// # }
+/// ```
+pub async fn run_feed_supervised<F, Fut>(
+    connector: Arc<dyn ExchangeConnector>,
+    tx: mpsc::Sender<DataMessage>,
+    config: SupervisedConfig,
+    shutdown: watch::Receiver<bool>,
+    refresh: F,
+) -> Result<()>
+where
+    F: Fn() -> Fut + Send,
+    Fut: Future<Output = Result<WsFeedEndpoint>> + Send,
+{
+    // Bootstrap — fetch the initial endpoint via the same closure used for
+    // subsequent refreshes. Lets the caller route both paths through one
+    // implementation rather than passing initial URL + subs separately.
+    let WsFeedEndpoint {
+        url: mut current_url,
+        subscriptions: mut current_subs,
+    } = refresh().await?;
+
+    let mut cycle: u32 = 0;
+
+    loop {
+        let result = run_feed(
+            current_url.clone(),
+            current_subs.clone(),
+            connector.clone(),
+            tx.clone(),
+            config.runner.clone(),
+            shutdown.clone(),
+        )
+        .await;
+
+        match result {
+            Ok(()) => return Ok(()), // clean shutdown
+            Err(ExchangeError::WsDisconnected { attempts, url }) => {
+                cycle += 1;
+                if cycle > config.max_refresh_cycles {
+                    error!(
+                        cycle,
+                        max = config.max_refresh_cycles,
+                        exchange = connector.exchange_name(),
+                        "supervisor exhausted refresh budget"
+                    );
+                    return Err(ExchangeError::WsDisconnected { url, attempts });
+                }
+
+                // A shutdown that fired during the inner exhaustion path
+                // shouldn't trigger a token refresh.
+                if *shutdown.borrow() {
+                    info!(
+                        exchange = connector.exchange_name(),
+                        "shutdown requested before token refresh — exiting"
+                    );
+                    return Ok(());
+                }
+
+                warn!(
+                    cycle,
+                    inner_attempts = attempts,
+                    refresh_delay_secs = config.refresh_delay_secs,
+                    exchange = connector.exchange_name(),
+                    "WS cycle exhausted — refreshing token"
+                );
+
+                // Sleep with shutdown awareness so an in-flight shutdown
+                // doesn't have to wait the full refresh_delay before the
+                // supervisor returns.
+                let mut shutdown_wait = shutdown.clone();
+                tokio::select! {
+                    biased;
+                    Ok(()) = shutdown_wait.changed() => {
+                        if *shutdown_wait.borrow() {
+                            info!(
+                                exchange = connector.exchange_name(),
+                                "shutdown requested during refresh delay — exiting"
+                            );
+                            return Ok(());
+                        }
+                    }
+                    () = tokio::time::sleep(Duration::from_secs(config.refresh_delay_secs)) => {}
+                }
+
+                match refresh().await {
+                    Ok(endpoint) => {
+                        info!(
+                            cycle,
+                            exchange = connector.exchange_name(),
+                            "token refreshed — starting new feed cycle"
+                        );
+                        current_url = endpoint.url;
+                        current_subs = endpoint.subscriptions;
+                    }
+                    Err(e) => {
+                        error!(
+                            error = %e,
+                            cycle,
+                            exchange = connector.exchange_name(),
+                            "token refresh failed — surfacing error to caller"
+                        );
+                        return Err(e);
+                    }
+                }
+            }
+            Err(other) => return Err(other), // non-disconnect errors propagate
         }
     }
 }

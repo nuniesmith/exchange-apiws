@@ -40,7 +40,50 @@
   tests; first-pass (thinner) duplicates removed, keeping the complete
   second-pass versions with error-propagation coverage.
 
-⚠  Still open
+✓  Disconnection hardening (May 2026 — log analysis driven)
+
+Root cause from 16 days of bot logs (May 8–24): every 10-attempt
+exhaustion cascade was a stale-token symptom — sessions accepted, then
+closed within ~1 s of subscribe. A freshly negotiated token recovered
+on the very next attempt. The bare runner was burning 9+ minutes of
+blackout per cascade because the token refresh lived only in the bot's
+outer wrapper, gated behind WsDisconnected.
+
+• Fix 1 — run_feed_supervised + SupervisedConfig + WsFeedEndpoint
+  (src/ws/runner.rs). Wraps run_feed in an outer loop that calls a
+  caller-supplied refresh closure when the inner reconnect budget is
+  exhausted, instead of returning WsDisconnected.
+    - Default SupervisedConfig: per-cycle attempts = 3 (down from 10),
+      max_refresh_cycles = u32::MAX, refresh_delay_secs = 5.
+    - Cycle-exhaustion → 5 s pause → refresh closure → new cycle.
+    - Shutdown signal honoured both inside run_feed and during the
+      refresh-delay wait via tokio::select on the shared watch::Receiver.
+    - Refresh-closure errors propagate unchanged to the caller.
+  Wired up in src/ws/mod.rs and src/lib.rs re-exports; documented with
+  a runnable doctest. README has a "Supervised WebSocket feed" section
+  with a full KuCoin example.
+• Supervised test coverage — tests/ws_types.rs, 5 new tests covering:
+    - supervised_refreshes_on_inner_exhaustion (refresh call counting)
+    - supervised_recovers_with_new_endpoint (URL handoff on recovery)
+    - supervised_propagates_refresh_error (Auth error surfaces)
+    - supervised_exhausts_refresh_cycles (max_refresh_cycles = 0)
+    - supervised_shuts_down_during_refresh (shutdown wins over delay)
+
+⚠  Still open (disconnection hardening — from log analysis)
+• Fix 2 — promote first session-end reason to WARN with close-frame
+  reason. The current INFO ("server closed WS connection") is invisible
+  in the bot's WARN-only filter, leaving cascades with no visible root
+  cause in production logs.
+• Fix 3 — tighter bare-runner defaults? (debatable now that Fix 1
+  exists). Default WsRunnerConfig still has max_reconnect_attempts = 10
+  for backwards compatibility; SupervisedConfig overrides to 3.
+• Fix 4 — connect/read timeouts. connect_async has no timeout; not
+  triggered in logs yet but a stalled handshake could hang forever.
+  Add tokio::time::timeout(10s, connect_async(url)).
+• Reconnect-event observability — emit a counter/callback so the bot
+  can log refresh cycles to Redis without log scraping.
+
+⚠  Still open (architecture)
 • Multi-exchange support — only KuCoin is implemented; the
   ExchangeConnector trait is the extension point for new venues.
 

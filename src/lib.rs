@@ -86,4 +86,7 @@ pub use types::{Candle, OrderType, STP, Side, TimeInForce};
 
 // ── WS convenience re-exports ─────────────────────────────────────────────────
 
-pub use ws::{KucoinConnector, WsRunnerConfig, run_feed};
+pub use ws::{
+    KucoinConnector, SupervisedConfig, WsFeedEndpoint, WsRunnerConfig, run_feed,
+    run_feed_supervised,
+};

@@ -6,5 +6,7 @@ pub mod runner;
 pub mod types;
 
 pub use feed::KucoinConnector;
-pub use runner::{WsRunnerConfig, run_feed};
+pub use runner::{
+    SupervisedConfig, WsFeedEndpoint, WsRunnerConfig, run_feed, run_feed_supervised,
+};
 pub use types::*;
