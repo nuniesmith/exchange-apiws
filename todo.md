@@ -69,11 +69,21 @@ outer wrapper, gated behind WsDisconnected.
     - supervised_exhausts_refresh_cycles (max_refresh_cycles = 0)
     - supervised_shuts_down_during_refresh (shutdown wins over delay)
 
-⚠  Still open (disconnection hardening — from log analysis)
 • Fix 2 — promote first session-end reason to WARN with close-frame
-  reason. The current INFO ("server closed WS connection") is invisible
-  in the bot's WARN-only filter, leaving cascades with no visible root
-  cause in production logs.
+  reason (src/ws/runner.rs). The Close(frame) and stream-None arms now
+  fire WARN with close code + reason when attempt == 0 AND uptime < 5 s
+  (the canonical cascade signature from the log analysis). Normal token
+  rotations (long-lived session ending) still log at INFO, so the new
+  WARN is a clean cascade-only signal for production log filters.
+    - New const CASCADE_DETECT_SECS = 5
+    - New helper const fn is_cascade_start(attempt, uptime_secs)
+    - subscribed_at: Instant captured after subscribe loop completes
+    - Err(read error) arm unchanged — existing attempt-based gate is
+      correct for transient TCP resets; cascades manifest as Close
+      frames in the bot's actual logs, not as read errors.
+    - 3 unit tests in src/ws/runner.rs::tests covering the truth table.
+
+⚠  Still open (disconnection hardening — from log analysis)
 • Fix 3 — tighter bare-runner defaults? (debatable now that Fix 1
   exists). Default WsRunnerConfig still has max_reconnect_attempts = 10
   for backwards compatibility; SupervisedConfig overrides to 3.
