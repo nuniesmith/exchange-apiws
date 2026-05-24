@@ -276,12 +276,41 @@ pub async fn run_feed(
 
 // ── Internal session ──────────────────────────────────────────────────────────
 
+/// A session that ended within this many seconds of subscribe is treated as
+/// a cascade indicator (likely stale token) rather than a normal rotation.
+///
+/// Healthy KuCoin sessions live for minutes to hours; cascades close within
+/// roughly a second of subscribe. 5 s gives generous margin for slow
+/// networks without misclassifying real rotations.
+const CASCADE_DETECT_SECS: u64 = 5;
+
+/// Returns `true` when a session-ending event looks like the start of a
+/// disconnect cascade (likely stale token), warranting WARN-level logging
+/// rather than INFO.
+///
+/// A cascade is the combination of:
+/// - `attempt == 0` — this is the first session in a new chain (the runner
+///   resets the attempt counter after any session that lived for
+///   [`run_feed`]'s `STABLE_SESSION_SECS` window).
+/// - `uptime_secs < CASCADE_DETECT_SECS` — the session ended too quickly to
+///   be a routine token rotation or rolling restart.
+///
+/// Subsequent attempts in a cascade are already visible via the WARN
+/// "WS reconnecting" log emitted by [`run_feed`], so this only fires once
+/// per cascade — at the moment with the most diagnostic value.
+const fn is_cascade_start(attempt: u32, uptime_secs: u64) -> bool {
+    attempt == 0 && uptime_secs < CASCADE_DETECT_SECS
+}
+
 enum SessionOutcome {
     ShutdownRequested,
     ReceiverDropped,
     Disconnected,
 }
 
+// The connect-subscribe-recv-loop is most readable as one linear function;
+// splitting purely to satisfy the line-count lint would obscure the flow.
+#[allow(clippy::too_many_lines)]
 async fn single_session(
     url: &str,
     subscriptions: &[String],
@@ -318,6 +347,11 @@ async fn single_session(
         exchange = connector.exchange_name(),
         "WS connected and subscribed"
     );
+
+    // Mark the start of the recv-loop phase so we can distinguish a normal
+    // long-uptime rotation from a cascade where the server closes us within
+    // a second of subscribe.
+    let subscribed_at = Instant::now();
 
     let mut ping_tick = interval(Duration::from_secs(config.ping_interval_secs));
     ping_tick.tick().await; // discard the immediate first tick
@@ -360,7 +394,35 @@ async fn single_session(
                         }
                     }
                     Some(Ok(Message::Close(frame))) => {
-                        info!(frame = ?frame, "server closed WS connection");
+                        let uptime_secs = subscribed_at.elapsed().as_secs();
+                        let close_code = frame.as_ref().map(|f| u16::from(f.code));
+                        let close_reason = frame
+                            .as_ref()
+                            .map(|f| f.reason.to_string())
+                            .unwrap_or_default();
+                        if is_cascade_start(attempt, uptime_secs) {
+                            // First attempt + sub-5 s uptime = the server is
+                            // closing us right after subscribe. Almost always
+                            // a stale-token cascade. Surface this at WARN so
+                            // production log filters see the close reason.
+                            warn!(
+                                uptime_secs,
+                                attempt,
+                                close_code,
+                                close_reason = %close_reason,
+                                exchange = connector.exchange_name(),
+                                "WS server closed connection early — likely cascade start"
+                            );
+                        } else {
+                            info!(
+                                uptime_secs,
+                                attempt,
+                                close_code,
+                                close_reason = %close_reason,
+                                exchange = connector.exchange_name(),
+                                "WS server closed connection"
+                            );
+                        }
                         return SessionOutcome::Disconnected;
                     }
                     Some(Ok(Message::Binary(_))) => {
@@ -382,7 +444,25 @@ async fn single_session(
                         return SessionOutcome::Disconnected;
                     }
                     None => {
-                        debug!("WS stream closed");
+                        let uptime_secs = subscribed_at.elapsed().as_secs();
+                        if is_cascade_start(attempt, uptime_secs) {
+                            // Stream ended without a close frame — usually a
+                            // half-closed TCP connection. At attempt 0 with
+                            // sub-5 s uptime this looks like a cascade too.
+                            warn!(
+                                uptime_secs,
+                                attempt,
+                                exchange = connector.exchange_name(),
+                                "WS stream ended without close frame — likely cascade start"
+                            );
+                        } else {
+                            debug!(
+                                uptime_secs,
+                                attempt,
+                                exchange = connector.exchange_name(),
+                                "WS stream closed"
+                            );
+                        }
                         return SessionOutcome::Disconnected;
                     }
                 }
@@ -666,5 +746,35 @@ where
             }
             Err(other) => return Err(other), // non-disconnect errors propagate
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::is_cascade_start;
+
+    #[test]
+    fn cascade_start_fires_on_fresh_short_session() {
+        // attempt 0, sub-threshold uptime → the canonical cascade signature.
+        assert!(is_cascade_start(0, 0));
+        assert!(is_cascade_start(0, 4));
+    }
+
+    #[test]
+    fn cascade_start_not_for_normal_rotation() {
+        // attempt 0 but the session was stable — likely a normal rotation
+        // (token expiry, rolling restart). Should NOT be treated as cascade.
+        assert!(!is_cascade_start(0, 5));
+        assert!(!is_cascade_start(0, 60));
+        assert!(!is_cascade_start(0, 86_400));
+    }
+
+    #[test]
+    fn cascade_start_not_for_subsequent_attempts() {
+        // attempts > 0 are already visible via the WARN "reconnecting" log
+        // emitted by run_feed, so this only fires once per cascade.
+        assert!(!is_cascade_start(1, 0));
+        assert!(!is_cascade_start(5, 0));
+        assert!(!is_cascade_start(10, 3));
     }
 }
