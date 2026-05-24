@@ -58,7 +58,7 @@ use std::time::{Duration, Instant};
 
 use futures_util::{SinkExt, StreamExt};
 use tokio::sync::{mpsc, watch};
-use tokio::time::interval;
+use tokio::time::{interval, timeout};
 use tokio_tungstenite::{connect_async, tungstenite::Message};
 use tracing::{debug, error, info, warn};
 
@@ -86,6 +86,24 @@ pub struct WsRunnerConfig {
     /// Give up and return [`ExchangeError::WsDisconnected`] after this many
     /// consecutive failed reconnect attempts. Set to `u32::MAX` to retry forever.
     pub max_reconnect_attempts: u32,
+    /// Maximum time to wait for the WebSocket handshake to complete (seconds).
+    ///
+    /// Wraps `connect_async` in [`tokio::time::timeout`]. A stalled TLS or
+    /// HTTP-upgrade handshake would otherwise hang indefinitely; the runner
+    /// would only escape when the OS surfaces a TCP error, which can take
+    /// minutes. Defaults to 10 s — plenty of margin for a healthy connect
+    /// while bounding the worst case.
+    pub connect_timeout_secs: u64,
+    /// Maximum duration of total silence (no frames received from the
+    /// server, including KuCoin's pong reply to our ping) before treating
+    /// the connection as dead (seconds).
+    ///
+    /// Defends against half-closed TCP connections where reads block forever
+    /// because the OS hasn't yet surfaced the dead socket. KuCoin sends a
+    /// pong on each of our ~18 s pings, so 60 s of silence implies ≥ 3
+    /// missed pongs — almost certainly a dead connection. Set to 0 to
+    /// disable the idle check entirely.
+    pub idle_timeout_secs: u64,
 }
 
 impl Default for WsRunnerConfig {
@@ -95,6 +113,8 @@ impl Default for WsRunnerConfig {
             reconnect_delay_secs: 5,
             max_reconnect_delay_secs: 80,
             max_reconnect_attempts: 10,
+            connect_timeout_secs: 10,
+            idle_timeout_secs: 60,
         }
     }
 }
@@ -322,10 +342,20 @@ async fn single_session(
 ) -> SessionOutcome {
     info!(url, exchange = connector.exchange_name(), "WS connecting");
 
-    let ws_stream = match connect_async(url).await {
-        Ok((stream, _resp)) => stream,
-        Err(e) => {
-            warn!(error = %e, "WS connect failed");
+    let connect_timeout = Duration::from_secs(config.connect_timeout_secs);
+    let ws_stream = match timeout(connect_timeout, connect_async(url)).await {
+        Ok(Ok((stream, _resp))) => stream,
+        Ok(Err(e)) => {
+            warn!(error = %e, exchange = connector.exchange_name(), "WS connect failed");
+            return SessionOutcome::Disconnected;
+        }
+        Err(_elapsed) => {
+            warn!(
+                timeout_secs = config.connect_timeout_secs,
+                url,
+                exchange = connector.exchange_name(),
+                "WS connect timed out — handshake stalled"
+            );
             return SessionOutcome::Disconnected;
         }
     };
@@ -353,6 +383,12 @@ async fn single_session(
     // a second of subscribe.
     let subscribed_at = Instant::now();
 
+    // Track the last time we received any frame so the ping branch can fire
+    // an idle-timeout abort when a half-closed TCP connection leaves reads
+    // hanging forever. Seeded to "now" so a quiet symbol doesn't trip on
+    // the very first tick.
+    let mut last_frame_at = Instant::now();
+
     let mut ping_tick = interval(Duration::from_secs(config.ping_interval_secs));
     ping_tick.tick().await; // discard the immediate first tick
 
@@ -371,6 +407,12 @@ async fn single_session(
 
             // ── Incoming WS frame ────────────────────────────────────────────
             frame = read.next() => {
+                // Any non-None outcome counts as receiving something from
+                // the wire — including errors and close frames — so the
+                // idle check below correctly resets on real activity.
+                if frame.is_some() {
+                    last_frame_at = Instant::now();
+                }
                 match frame {
                     Some(Ok(Message::Text(text))) => {
                         match connector.parse_message(&text) {
@@ -470,6 +512,24 @@ async fn single_session(
 
             // ── Application-level ping ───────────────────────────────────────
             _ = ping_tick.tick() => {
+                // Piggyback the idle-timeout check on the ping cadence
+                // rather than running a separate timer.  KuCoin sends a
+                // text pong on each of our pings, so on a healthy
+                // connection `last_frame_at` is refreshed within one
+                // ping interval and the check below never trips.
+                if config.idle_timeout_secs > 0 {
+                    let idle = last_frame_at.elapsed();
+                    if idle >= Duration::from_secs(config.idle_timeout_secs) {
+                        warn!(
+                            idle_secs = idle.as_secs(),
+                            limit_secs = config.idle_timeout_secs,
+                            exchange = connector.exchange_name(),
+                            "WS idle timeout — no frames received; dropping connection"
+                        );
+                        return SessionOutcome::Disconnected;
+                    }
+                }
+
                 guard.check().await;
                 if let Err(e) = write
                     .send(Message::Text(WsMessage::ping_json().into()))
