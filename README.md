@@ -177,6 +177,79 @@ let subs = vec![
 // ... same run_feed setup as above
 ```
 
+### Supervised WebSocket feed (token re-negotiation on cascade)
+
+`run_feed` retries inside one token. If the disconnect cause is a stale or
+invalidated token (KuCoin's gateway closing freshly subscribed sessions, for
+example), retrying the dead endpoint can burn the full reconnect budget —
+up to **~9 minutes of blackout with default settings**. `run_feed_supervised`
+wraps `run_feed` in an outer loop that calls a caller-supplied closure to
+re-negotiate a fresh token whenever a cycle exhausts, typically restoring
+the feed in seconds.
+
+```rust
+use std::sync::Arc;
+use tokio::sync::{mpsc, watch};
+use exchange_apiws::{Credentials, KuCoin, actors::DataMessage};
+use exchange_apiws::ws::{
+    KucoinConnector, SupervisedConfig, WsFeedEndpoint, run_feed_supervised,
+};
+
+#[tokio::main]
+async fn main() -> exchange_apiws::Result<()> {
+    let kucoin = KuCoin::futures(Credentials::from_env()?);
+    let client = Arc::new(kucoin.rest_client()?);
+    let env    = kucoin.env();
+
+    // Parsing is URL-independent — one connector handles all cycles.
+    let initial = client.get_ws_token_public().await?;
+    let connector = Arc::new(KucoinConnector::new(&initial, env)?);
+
+    // Called on bootstrap and after every cascade.
+    let refresh = {
+        let client = client.clone();
+        move || {
+            let client = client.clone();
+            async move {
+                let token = client.get_ws_token_public().await?;
+                let conn  = KucoinConnector::new(&token, env)?;
+                let subs  = vec![
+                    conn.trade_subscription("XBTUSDTM").unwrap(),
+                    conn.ticker_subscription("XBTUSDTM").unwrap(),
+                ];
+                Ok(WsFeedEndpoint {
+                    url: conn.ws_url().to_string(),
+                    subscriptions: subs,
+                })
+            }
+        }
+    };
+
+    let (tx, mut rx)               = mpsc::channel::<DataMessage>(1024);
+    let (shutdown_tx, shutdown_rx) = watch::channel(false);
+
+    tokio::spawn(run_feed_supervised(
+        connector,
+        tx,
+        SupervisedConfig::default(),  // per-cycle budget of 3, unlimited cycles
+        shutdown_rx,
+        refresh,
+    ));
+
+    while let Some(msg) = rx.recv().await {
+        println!("{msg:?}");
+    }
+    let _ = shutdown_tx.send(true);
+    Ok(())
+}
+```
+
+`SupervisedConfig::default()` sets `runner.max_reconnect_attempts = 3` so
+cascades are detected in ~35 s rather than ~9 min, and
+`max_refresh_cycles = u32::MAX` so the supervisor keeps refreshing until you
+trigger `shutdown_tx.send(true)`. For a bounded version that surfaces
+`WsDisconnected` after N refresh cycles, override `max_refresh_cycles`.
+
 ### Contract sizing
 
 `calc_contracts` is an async method on `KuCoinClient` — it calls `GET /api/v1/contracts/{symbol}` to retrieve the contract multiplier at runtime, so it returns a `Result`.
