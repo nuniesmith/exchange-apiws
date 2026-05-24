@@ -18,6 +18,8 @@
 //! | `supervised_propagates_refresh_error` | refresh closure error is surfaced to the caller |
 //! | `supervised_exhausts_refresh_cycles` | bounded cycle budget → `WsDisconnected` after N cycles |
 //! | `supervised_shuts_down_during_refresh` | shutdown during refresh delay exits cleanly |
+//! | `run_feed_connect_timeout_aborts_handshake` | stalled WS upgrade is bounded by `connect_timeout_secs` |
+//! | `run_feed_idle_timeout_drops_silent_connection` | sub-`idle_timeout_secs` silence drops the half-closed conn |
 //!
 //! Run with:
 //! ```text
@@ -29,6 +31,7 @@ use std::sync::atomic::{AtomicU32, Ordering};
 use std::time::Duration;
 
 use futures_util::{SinkExt, StreamExt};
+use tokio::io::AsyncReadExt;
 use tokio::net::{TcpListener, TcpStream};
 use tokio::sync::{mpsc, watch};
 use tokio_tungstenite::{WebSocketStream, accept_async, tungstenite::Message};
@@ -121,6 +124,10 @@ fn fast_config(max_reconnect_attempts: u32) -> WsRunnerConfig {
         reconnect_delay_secs: 0,
         max_reconnect_delay_secs: 80,
         max_reconnect_attempts,
+        // Generous timeouts so the existing tests never trip them; the
+        // dedicated connect-/idle-timeout tests below use tight values.
+        connect_timeout_secs: 10,
+        idle_timeout_secs: 0, // disable idle check for the default tests
     }
 }
 
@@ -330,6 +337,8 @@ fn fast_supervised(max_reconnect_attempts: u32, max_refresh_cycles: u32) -> Supe
             reconnect_delay_secs: 0,
             max_reconnect_delay_secs: 1,
             max_reconnect_attempts,
+            connect_timeout_secs: 10,
+            idle_timeout_secs: 0,
         },
         max_refresh_cycles,
         // Keep the inter-cycle delay tiny so the suite still finishes fast.
@@ -660,6 +669,8 @@ async fn supervised_shuts_down_during_refresh() {
             reconnect_delay_secs: 0,
             max_reconnect_delay_secs: 1,
             max_reconnect_attempts: 1,
+            connect_timeout_secs: 10,
+            idle_timeout_secs: 0,
         },
         max_refresh_cycles: 5,
         refresh_delay_secs: 10,
@@ -686,4 +697,114 @@ async fn supervised_shuts_down_during_refresh() {
     // `waiting` notify is unused in this assertion path but kept above to
     // document the synchronisation point inside the refresh closure.
     let _ = waiting;
+}
+
+// ── Timeout tests ──────────────────────────────────────────────────────────────
+
+/// Server accepts the TCP connection and reads the WS upgrade request but
+/// never replies — exactly the stalled-handshake case that would hang
+/// `connect_async` forever without a timeout. With `connect_timeout_secs = 1`
+/// and `max_reconnect_attempts = 1`, `run_feed` must give up within a few
+/// seconds rather than blocking until the OS notices the dead socket.
+#[tokio::test]
+async fn run_feed_connect_timeout_aborts_handshake() {
+    let (url, listener) = bind_local().await;
+    let (_sd_tx, sd_rx) = watch::channel(false);
+
+    tokio::spawn(async move {
+        loop {
+            let Ok((mut stream, _)) = listener.accept().await else {
+                break;
+            };
+            tokio::spawn(async move {
+                // Consume the HTTP upgrade request so the client thinks the
+                // server is alive, then sit silent. `connect_async` will
+                // block waiting for the 101 Switching Protocols response.
+                let mut buf = vec![0u8; 4096];
+                let _ = stream.read(&mut buf).await;
+                tokio::time::sleep(Duration::from_secs(30)).await;
+            });
+        }
+    });
+
+    let config = WsRunnerConfig {
+        ping_interval_secs: 60,
+        reconnect_delay_secs: 0,
+        max_reconnect_delay_secs: 1,
+        max_reconnect_attempts: 1,
+        connect_timeout_secs: 1,
+        idle_timeout_secs: 0,
+    };
+
+    let connector = StubConnector::new(&url);
+    let (tx, _rx) = mpsc::channel::<DataMessage>(16);
+
+    // Bound: 2 attempts × 1 s connect_timeout + slack. 10 s is plenty
+    // and would catch any regression that lets the handshake hang.
+    let result = tokio::time::timeout(
+        Duration::from_secs(10),
+        run_feed(url, vec![], connector, tx, config, sd_rx),
+    )
+    .await
+    .expect("run_feed hung past the connect_timeout — Fix 4 regression");
+
+    assert!(
+        matches!(result, Err(ExchangeError::WsDisconnected { .. })),
+        "expected WsDisconnected after exhausting attempts, got {result:?}"
+    );
+}
+
+/// Server completes the WS handshake then goes silent — no frames, no
+/// pongs to our pings. With `ping_interval_secs = 1` and
+/// `idle_timeout_secs = 2`, the idle check inside the ping branch must
+/// fire on the second ping tick and abort the session.
+#[tokio::test]
+async fn run_feed_idle_timeout_drops_silent_connection() {
+    let (url, listener) = bind_local().await;
+    let (_sd_tx, sd_rx) = watch::channel(false);
+
+    tokio::spawn(async move {
+        loop {
+            let Ok((stream, _)) = listener.accept().await else {
+                break;
+            };
+            let Ok(mut ws) = accept_async(stream).await else {
+                continue;
+            };
+            // Drain inbound frames silently — never reply.  Each session
+            // sits like this until our idle timer terminates it.
+            while let Some(frame) = ws.next().await {
+                match frame {
+                    Ok(Message::Close(_)) | Err(_) => break,
+                    _ => {}
+                }
+            }
+        }
+    });
+
+    let config = WsRunnerConfig {
+        ping_interval_secs: 1,
+        reconnect_delay_secs: 0,
+        max_reconnect_delay_secs: 1,
+        max_reconnect_attempts: 1,
+        connect_timeout_secs: 5,
+        idle_timeout_secs: 2,
+    };
+
+    let connector = StubConnector::new(&url);
+    let (tx, _rx) = mpsc::channel::<DataMessage>(16);
+
+    // Bound: 2 attempts × ~2 s idle + handshake/reconnect overhead.
+    // 10 s catches a regression that disables the idle path.
+    let result = tokio::time::timeout(
+        Duration::from_secs(10),
+        run_feed(url, vec![], connector, tx, config, sd_rx),
+    )
+    .await
+    .expect("run_feed hung past the idle_timeout — Fix 4 regression");
+
+    assert!(
+        matches!(result, Err(ExchangeError::WsDisconnected { .. })),
+        "expected WsDisconnected from idle path, got {result:?}"
+    );
 }

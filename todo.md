@@ -83,13 +83,25 @@ outer wrapper, gated behind WsDisconnected.
       frames in the bot's actual logs, not as read errors.
     - 3 unit tests in src/ws/runner.rs::tests covering the truth table.
 
+• Fix 4 — connect & idle timeouts (src/ws/runner.rs). Two new
+  WsRunnerConfig fields:
+    - connect_timeout_secs (default 10): wraps connect_async in
+      tokio::time::timeout so a stalled TLS or HTTP-upgrade handshake
+      can't hang forever — surfaces as Disconnected within bound.
+    - idle_timeout_secs (default 60): piggybacks on the ping tick to
+      check `last_frame_at.elapsed()`. KuCoin sends a pong on each
+      ping; ≥60 s of total silence ⇒ half-closed TCP ⇒ drop connection
+      and let the reconnect path try again. Set to 0 to disable.
+  Two new integration tests:
+    - run_feed_connect_timeout_aborts_handshake — server reads HTTP
+      upgrade but never replies; verifies bounded WsDisconnected.
+    - run_feed_idle_timeout_drops_silent_connection — server accepts
+      WS then goes silent; verifies idle path fires from the ping tick.
+
 ⚠  Still open (disconnection hardening — from log analysis)
 • Fix 3 — tighter bare-runner defaults? (debatable now that Fix 1
   exists). Default WsRunnerConfig still has max_reconnect_attempts = 10
   for backwards compatibility; SupervisedConfig overrides to 3.
-• Fix 4 — connect/read timeouts. connect_async has no timeout; not
-  triggered in logs yet but a stalled handshake could hang forever.
-  Add tokio::time::timeout(10s, connect_async(url)).
 • Reconnect-event observability — emit a counter/callback so the bot
   can log refresh cycles to Redis without log scraping.
 
