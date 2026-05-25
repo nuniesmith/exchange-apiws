@@ -12,7 +12,7 @@
 use exchange_apiws::{
     ExchangeError, KuCoinClient,
     client::Credentials,
-    rest::StopOrderDetail,
+    rest::{MarginModel, StopOrderDetail},
     types::{OrderType, Side},
 };
 use wiremock::matchers::{method, path, query_param};
@@ -1699,6 +1699,213 @@ async fn get_isolated_margin_accounts_parses_pairs() {
     assert_eq!(m.assets[0].symbol, "BTC-USDT");
     assert_eq!(m.assets[0].base_asset.currency, "BTC");
     assert_eq!(m.assets[0].quote_asset.borrowable_amount, Some(250.0));
+}
+
+// ── Spot-margin orders ────────────────────────────────────────────────────────
+
+#[tokio::test]
+async fn place_margin_order_returns_order_id_and_borrow_size() {
+    let server = MockServer::start().await;
+
+    Mock::given(method("POST"))
+        .and(path("/api/v1/margin/order"))
+        .respond_with(
+            ResponseTemplate::new(200).set_body_json(ok_envelope(serde_json::json!({
+                "orderId":     "margin-order-1",
+                "borrowSize":  "0.005",
+                "loanApplyId": "loan-1"
+            }))),
+        )
+        .expect(1)
+        .mount(&server)
+        .await;
+
+    let resp = sim_client(&server.uri())
+        .place_margin_order(
+            "BTC-USDT",
+            Side::Buy,
+            OrderType::Limit,
+            0.01,
+            Some(30_000.0),
+            MarginModel::Cross,
+            true,
+            None,
+        )
+        .await
+        .expect("place margin order");
+    assert_eq!(resp.order_id, "margin-order-1");
+    assert_eq!(resp.borrow_size.as_deref(), Some("0.005"));
+    assert_eq!(resp.loan_apply_id.as_deref(), Some("loan-1"));
+}
+
+#[tokio::test]
+async fn get_margin_order_returns_typed_detail() {
+    let server = MockServer::start().await;
+
+    Mock::given(method("GET"))
+        .and(path("/api/v1/margin/orders/o-1"))
+        .respond_with(
+            ResponseTemplate::new(200).set_body_json(ok_envelope(serde_json::json!({
+                "id":"o-1","symbol":"BTC-USDT","side":"buy","type":"limit",
+                "size":"0.01","price":"30000","dealSize":"0","dealFunds":"0",
+                "marginModel":"cross","timeInForce":"GTC","isActive":true,
+                "cancelExist":false,"createdAt":1700000000000_u64
+            }))),
+        )
+        .expect(1)
+        .mount(&server)
+        .await;
+
+    let detail = sim_client(&server.uri())
+        .get_margin_order("o-1")
+        .await
+        .expect("get margin order");
+    assert_eq!(detail.id, "o-1");
+    assert_eq!(detail.side, "buy");
+    assert!(detail.is_active);
+    assert!((detail.size_f64() - 0.01).abs() < 1e-9);
+}
+
+#[tokio::test]
+async fn cancel_margin_order_returns_cancelled_ids() {
+    let server = MockServer::start().await;
+
+    Mock::given(method("DELETE"))
+        .and(path("/api/v1/margin/orders/o-1"))
+        .respond_with(
+            ResponseTemplate::new(200).set_body_json(ok_envelope(serde_json::json!({
+                "cancelledOrderIds": ["o-1"]
+            }))),
+        )
+        .expect(1)
+        .mount(&server)
+        .await;
+
+    let r = sim_client(&server.uri())
+        .cancel_margin_order("o-1")
+        .await
+        .expect("cancel margin order");
+    assert_eq!(r.cancelled_order_ids, vec!["o-1".to_string()]);
+}
+
+#[tokio::test]
+async fn cancel_margin_order_already_done_returns_empty() {
+    let server = MockServer::start().await;
+
+    Mock::given(method("DELETE"))
+        .and(path("/api/v1/margin/orders/o-1"))
+        .respond_with(
+            ResponseTemplate::new(200).set_body_json(ok_envelope(serde_json::json!({
+                "cancelledOrderIds": []
+            }))),
+        )
+        .expect(1)
+        .mount(&server)
+        .await;
+
+    let r = sim_client(&server.uri())
+        .cancel_margin_order("o-1")
+        .await
+        .expect("cancel margin order");
+    assert!(r.cancelled_order_ids.is_empty());
+}
+
+#[tokio::test]
+async fn get_margin_fills_unwraps_items_page() {
+    let server = MockServer::start().await;
+
+    Mock::given(method("GET"))
+        .and(path("/api/v1/margin/fills"))
+        .and(query_param("symbol", "BTC-USDT"))
+        .respond_with(
+            ResponseTemplate::new(200).set_body_json(ok_envelope(serde_json::json!({
+                "currentPage": 1, "pageSize": 50, "totalNum": 2, "totalPage": 1,
+                "items": [
+                    {"symbol":"BTC-USDT","orderId":"o-1","side":"buy","price":"30000","size":"0.005","funds":"150","fee":"0.15","feeCurrency":"USDT","liquidity":"taker","tradeId":"t-1","createdAt":1700000000000_u64},
+                    {"symbol":"BTC-USDT","orderId":"o-2","side":"sell","price":"30010","size":"0.003","funds":"90.03","fee":"0.09","feeCurrency":"USDT","liquidity":"maker","tradeId":"t-2","createdAt":1700000000050_u64}
+                ]
+            }))),
+        )
+        .expect(1)
+        .mount(&server)
+        .await;
+
+    let fills = sim_client(&server.uri())
+        .get_margin_fills("BTC-USDT")
+        .await
+        .expect("get margin fills");
+    assert_eq!(fills.len(), 2);
+    assert_eq!(fills[0].side, "buy");
+    assert_eq!(fills[1].liquidity.as_deref(), Some("maker"));
+}
+
+#[tokio::test]
+async fn get_margin_balance_v1_parses_accounts() {
+    let server = MockServer::start().await;
+
+    Mock::given(method("GET"))
+        .and(path("/api/v1/margin/account"))
+        .respond_with(
+            ResponseTemplate::new(200).set_body_json(ok_envelope(serde_json::json!({
+                "debtRatio": "0",
+                "status":    "EFFECTIVE",
+                "accounts":  [{
+                    "currency":         "USDT",
+                    "totalBalance":     "100",
+                    "availableBalance": "100",
+                    "holdBalance":      "0",
+                    "liability":        "0",
+                    "maxBorrowSize":    "50"
+                }]
+            }))),
+        )
+        .expect(1)
+        .mount(&server)
+        .await;
+
+    let bal = sim_client(&server.uri())
+        .get_margin_balance()
+        .await
+        .expect("get margin balance");
+    assert_eq!(bal.status.as_deref(), Some("EFFECTIVE"));
+    assert_eq!(bal.accounts.len(), 1);
+    assert_eq!(bal.accounts[0].currency, "USDT");
+    assert_eq!(bal.accounts[0].max_borrow_size.as_deref(), Some("50"));
+}
+
+#[tokio::test]
+async fn place_margin_order_propagates_api_error() {
+    let server = MockServer::start().await;
+
+    Mock::given(method("POST"))
+        .and(path("/api/v1/margin/order"))
+        .respond_with(
+            ResponseTemplate::new(200)
+                .set_body_json(err_envelope("200004", "Balance insufficient")),
+        )
+        .expect(1)
+        .mount(&server)
+        .await;
+
+    let result = sim_client(&server.uri())
+        .place_margin_order(
+            "BTC-USDT",
+            Side::Buy,
+            OrderType::Market,
+            10.0,
+            None,
+            MarginModel::Cross,
+            false,
+            None,
+        )
+        .await;
+    match result {
+        Err(ExchangeError::Api { code, message }) => {
+            assert_eq!(code, "200004");
+            assert!(message.contains("Balance insufficient"));
+        }
+        other => panic!("expected Api error, got {other:?}"),
+    }
 }
 
 #[tokio::test]
