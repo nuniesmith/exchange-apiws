@@ -508,23 +508,49 @@ API keys available. Signing: HMAC-SHA512 over
 Add `src/kraken/auth.rs` (separate from `src/auth.rs` which is KuCoin-
 specific).
 
-### 5a. Public REST (`src/kraken/rest.rs`)
+### 5a. Public REST (`src/kraken/rest.rs`) ✓ DONE
 
-Base URL: `https://api.kraken.com`.
+Base URL: `https://api.kraken.com`. Uses `PublicRestClient`; the
+Kraken envelope `{"result":...,"error":[]}` is unwrapped by a free
+function `unwrap_kraken_envelope<T>` (public for external use). A
+non-empty `error` array surfaces as `ExchangeError::Api` with all
+messages joined by `"; "`.
 
-| Method | Endpoint |
-|--------|----------|
-| `get_assets()` | `GET /0/public/Assets` |
-| `get_asset_pairs(pair)` | `GET /0/public/AssetPairs` |
-| `get_ticker(pair)` | `GET /0/public/Ticker` |
-| `get_ohlc(pair, interval)` | `GET /0/public/OHLC` |
-| `get_orderbook(pair, count)` | `GET /0/public/Depth` |
-| `get_recent_trades(pair)` | `GET /0/public/Trades` |
-| `get_spread(pair)` | `GET /0/public/Spread` |
-| `get_system_status()` | `GET /0/public/SystemStatus` |
+| Method | Endpoint | Returns |
+|--------|----------|---------|
+| `get_system_status()` | `/0/public/SystemStatus` | `KrakenSystemStatus` |
+| `get_assets()` | `/0/public/Assets` | `HashMap<String, KrakenAsset>` |
+| `get_asset_pairs(pair?)` | `/0/public/AssetPairs` | `HashMap<String, KrakenAssetPair>` |
+| `get_ticker(pair)` | `/0/public/Ticker` | `HashMap<String, KrakenTicker>` |
+| `get_orderbook(pair, count)` | `/0/public/Depth` | `HashMap<String, KrakenOrderBook>` |
+| `get_ohlc(pair, interval_mins)` | `/0/public/OHLC` | `serde_json::Value` (mixed pair+"last" shape) |
+| `get_recent_trades(pair)` | `/0/public/Trades` | `serde_json::Value` (same) |
+| `get_spread(pair)` | `/0/public/Spread` | `serde_json::Value` (same) |
 
-Envelope: `{"result":{…},"error":[]}` — non-empty `error` array →
-`ExchangeError::Api`.
+Kraken-specific wire-format notes captured:
+- OHLC/Trades/Spread mix per-pair arrays with a `"last"` cursor key
+  at the same level — surfaced as `serde_json::Value` so callers can
+  pick whichever shape suits them (paginate via `last`, iterate
+  per-pair). A typed custom-Deserialize wrapper can be added later
+  if there's demand.
+- KrakenTicker fields use tuple wire shapes (`a/b/c/v/p/t/l/h`);
+  the struct stores them as-is and exposes `ask_price()`, `bid_price()`,
+  `last_price()`, `volume_24h()`, `high_24h()`, `low_24h()` helpers.
+- KrakenOrderBook levels are `(price_str, volume_str, timestamp_f64)`
+  — Kraken sends price/volume as strings but the timestamp as a JSON
+  number; the tuple type accommodates both. `bids_f64()` / `asks_f64()`
+  drop the timestamp column for downstream cross-exchange routing.
+- KrakenAsset / KrakenAssetPair use `#[serde(default)]` on optional
+  fields (`collateral_value`, `status`, `wsname`) since Kraken omits
+  them on inactive or non-collateral assets.
+
+Tests:
+- 6 unit tests in `src/kraken/rest.rs::tests` covering envelope
+  unwrap (success + Api error with joined messages), ticker tuple
+  helpers, orderbook helper, missing-optionals for Asset and AssetPair.
+- 10 wiremock integration tests in `tests/kraken_rest_mock.rs` —
+  one per endpoint (including both filtered and unfiltered
+  AssetPairs) plus an error-envelope propagation test.
 
 ### 5b. Private REST (authenticated)
 
