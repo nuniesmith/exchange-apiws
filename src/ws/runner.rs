@@ -228,14 +228,16 @@ impl WsRunnerConfig {
 ///
 /// KuCoin allows 100 client→server messages per 10 seconds per connection.
 /// This tracks send times in a `VecDeque` and sleeps if the window is full.
-struct WsMsgGuard {
+/// Shared with the WS-order client in [`crate::ws::orders`] so both code
+/// paths honour the same limit.
+pub(crate) struct WsMsgGuard {
     window: VecDeque<Instant>,
     max_msgs: usize,
     window_dur: Duration,
 }
 
 impl WsMsgGuard {
-    fn new() -> Self {
+    pub(crate) fn new() -> Self {
         Self {
             window: VecDeque::with_capacity(100),
             max_msgs: 100,
@@ -244,7 +246,7 @@ impl WsMsgGuard {
     }
 
     /// Call before every outbound send. Sleeps if the 100/10s quota is full.
-    async fn check(&mut self) {
+    pub(crate) async fn check(&mut self) {
         let now = Instant::now();
         // Drop timestamps older than the window.
         while self

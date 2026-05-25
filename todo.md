@@ -288,20 +288,47 @@ Tests:
   the "already done" empty-cancel case, the items-page unwrap pattern,
   and an Api-error propagation test for `place_margin_order`.
 
-### 2c. WebSocket order placement
+### 2c. WebSocket order placement ✓ DONE
 
 KuCoin's `wsapi.kucoin.com` supports placing and cancelling orders over WS
-for ultra-low latency. This requires a **private** WS token and a separate
-connection to `wss://wsapi.kucoin.com`.
+for ultra-low latency. Implemented in `src/ws/orders.rs` as
+`WsOrderClient` with a request/response correlation pipeline.
 
-Scope:
-- `src/ws/orders.rs` (new) — `WsOrderClient` wrapping a tungstenite sink
-- `place_order_ws(symbol, side, size, leverage, order_type, price)` → sends
-  JSON frame, awaits ack with matching `clientOid`
-- `cancel_order_ws(order_id)` → same pattern
-- Response matching by `clientOid` in a `HashMap<String, oneshot::Sender>`
-- Rate limit: 100 msg/10s (shared with the existing runner guard)
-- Tests: local tungstenite echo server verifying frame shape and ack routing
+- `WsOrderClient::connect(ws_url)` opens the WS, spawns a writer task
+  (drains an mpsc with the shared `WsMsgGuard` between sends) and a
+  reader task (routes inbound frames to pending `oneshot::Sender`s via
+  `clientOid` lookup in an `Arc<Mutex<HashMap<...>>>`).
+- `place_order(symbol, side, size, leverage, type, price)` builds the
+  KuCoin frame (`{type:"openOrder", topic:"/contractMarket/order",
+  data:{clientOid, side, symbol, type, size, leverage, price?}}`),
+  pushes it to the outbound queue, awaits the matching `WsOrderAck`.
+- `cancel_order(order_id)` follows the same shape with `cancelOrder`.
+- `send_raw(client_oid, frame)` is the escape hatch for callers that
+  need to construct a frame the canonical helpers don't model.
+- 5 s default per-request timeout; tunable via
+  `.with_request_timeout(d)`. Pending entries are cleaned up on
+  timeout so a late ack doesn't linger.
+- `close()` tears the connection down; any still-pending requests get
+  a `connection_closed` sentinel `WsOrderAck` so callers don't hang.
+- Rate-limit guard from runner.rs is now `pub(crate) WsMsgGuard` —
+  same 100 msg/10s sliding window shared between the data-feed runner
+  and the order client (per-connection, not per-account).
+
+Wire format caveat: KuCoin's wsapi schema isn't as exhaustively
+documented as the public feed; the request/response shape used here
+matches current public docs but may need adjustment if the schema
+diverges. `build_place_order_frame` / `build_cancel_order_frame` are
+public so callers can copy the canonical shape and route a tweaked
+version via `send_raw`.
+
+Tests:
+- 8 unit tests in `src/ws/orders.rs::tests` covering frame builders
+  (limit + market), inbound parser (`ack`, `error`, `welcome`, `pong`,
+  missing `clientOid`).
+- 5 integration tests in `tests/ws_orders_mock.rs` spinning up a local
+  tokio-tungstenite server: round-trip, **concurrent out-of-order
+  routing** (3 in-flight, server replies in reverse), error frame,
+  request timeout, connection-close pending-cleanup.
 
 ---
 
