@@ -146,21 +146,29 @@ are available for **spot only**.
 
 Everything below depends on these two foundational pieces.
 
-### 1a. PublicRestClient
+### 1a. PublicRestClient ✓ DONE
 
 `KuCoinClient` calls `build_headers` on every request — it cannot make
 unauthenticated calls. A new `PublicRestClient` is needed for Binance,
 Bybit, and the public endpoints of all other exchanges.
 
-```
-src/http.rs   (new)
-  PublicRestClient
-    - reqwest::Client (rustls, 10s timeout)
-    - base_url: String
-    - get<T: DeserializeOwned>(path, params) -> Result<T>
-    - same retry / 429-backoff logic as KuCoinClient
-    - no envelope unwrapping — caller decides shape
-```
+Implemented in `src/http.rs`:
+- `PublicRestClient::new(base_url)` (10 s default timeout) and
+  `PublicRestClient::with_timeout(base_url, timeout)`.
+- `get<T: DeserializeOwned>(path, params) -> Result<T>` — bare JSON,
+  no envelope unwrapping (caller decides shape).
+- Jittered exponential-backoff retry on network errors
+  (DEFAULT_RETRIES = 3, DEFAULT_BACKOFF = 1.5 base).
+- HTTP 429 honours the standard `Retry-After` seconds header (capped
+  at MAX_RATE_LIMIT_RETRIES = 5 consecutive sleeps).
+- 4xx/5xx → ExchangeError::Api without retry.
+
+Shared helpers (percent_encode, build_query_string, jitter_secs) and
+the retry tuning constants moved from client.rs to http.rs as
+pub(crate); KuCoinClient now imports them. Single source of truth.
+
+Tests: tests/public_rest_mock.rs (5 wiremock tests covering happy
+path, query encoding, 4xx, 429 + Retry-After, retry-exhaustion).
 
 Authenticated exchanges (Kraken, Crypto.com) will wrap this client and
 add their own signing layer, rather than sharing KuCoinClient's KuCoin-

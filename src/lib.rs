@@ -63,7 +63,8 @@
 //! │   └── types    — WsToken, WsMessage
 //! ├── actors   — ExchangeConnector trait, DataMessage and all data types
 //! ├── auth     — HMAC-SHA256 signing (key version 2, KuCoin-specific)
-//! ├── client   — KuCoinClient (generic HTTP plumbing), Credentials
+//! ├── client   — KuCoinClient (KuCoin-signed HTTP), Credentials
+//! ├── http     — PublicRestClient (unauthenticated HTTP); shared helpers
 //! ├── error    — ExchangeError, Result
 //! └── types    — Candle, Side, OrderType, TimeInForce, STP
 //! ```
@@ -73,6 +74,7 @@ pub mod auth;
 pub mod client;
 pub mod connectors;
 pub mod error;
+pub mod http;
 pub mod rest;
 pub mod types;
 pub mod ws;
@@ -82,6 +84,7 @@ pub mod ws;
 pub use client::{Credentials, KuCoinClient};
 pub use connectors::{ExchangeConfig, KuCoin, KucoinEnv};
 pub use error::{ExchangeError, Result};
+pub use http::PublicRestClient;
 pub use types::{Candle, OrderType, STP, Side, TimeInForce};
 
 // ── WS convenience re-exports ─────────────────────────────────────────────────
