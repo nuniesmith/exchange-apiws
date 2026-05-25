@@ -84,7 +84,7 @@ pub mod ws;
 // ── Primary re-exports ────────────────────────────────────────────────────────
 
 pub use binance::{BinanceConnector, BinanceRestClient};
-pub use bybit::{BybitCategory, BybitRestClient};
+pub use bybit::{BybitCategory, BybitConnector, BybitRestClient};
 pub use client::{Credentials, KuCoinClient};
 pub use connectors::{ExchangeConfig, KuCoin, KucoinEnv};
 pub use error::{ExchangeError, Result};

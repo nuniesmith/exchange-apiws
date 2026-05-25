@@ -64,7 +64,6 @@ use tracing::{debug, error, info, warn};
 
 use crate::actors::{DataMessage, ExchangeConnector};
 use crate::error::{ExchangeError, Result};
-use crate::ws::types::WsMessage;
 
 // ── Observability ─────────────────────────────────────────────────────────────
 
@@ -632,15 +631,19 @@ async fn single_session(
                     }
                 }
 
-                guard.check().await;
-                if let Err(e) = write
-                    .send(Message::Text(WsMessage::ping_json().into()))
-                    .await
-                {
-                    warn!(error = %e, "ping send failed");
-                    return SessionOutcome::Disconnected;
+                // Per-connector ping format. Returns None for exchanges
+                // (e.g. Binance) that drive heartbeats from the server side
+                // via protocol-level Ping/Pong frames — in that case the
+                // tick still runs to drive the idle check above but we
+                // don't send anything outbound.
+                if let Some(ping) = connector.ping_message() {
+                    guard.check().await;
+                    if let Err(e) = write.send(Message::Text(ping.into())).await {
+                        warn!(error = %e, "ping send failed");
+                        return SessionOutcome::Disconnected;
+                    }
+                    debug!(exchange = connector.exchange_name(), "sent ping");
                 }
-                debug!(exchange = connector.exchange_name(), "sent ping");
             }
         }
     }
