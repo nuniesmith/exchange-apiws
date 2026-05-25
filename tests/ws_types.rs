@@ -20,6 +20,8 @@
 //! | `supervised_shuts_down_during_refresh` | shutdown during refresh delay exits cleanly |
 //! | `run_feed_connect_timeout_aborts_handshake` | stalled WS upgrade is bounded by `connect_timeout_secs` |
 //! | `run_feed_idle_timeout_drops_silent_connection` | sub-`idle_timeout_secs` silence drops the half-closed conn |
+//! | `runner_emits_session_ended_and_exhausted_events` | `RunnerEvent::SessionEnded` + `ReconnectsExhausted` fire |
+//! | `supervised_emits_token_refresh_and_exhausted_events` | supervised path emits `TokenRefresh` + `RefreshExhausted` |
 //!
 //! Run with:
 //! ```text
@@ -39,8 +41,12 @@ use tokio_tungstenite::{WebSocketStream, accept_async, tungstenite::Message};
 use exchange_apiws::{
     ExchangeError,
     actors::{DataMessage, ExchangeConnector, TickerData, WebSocketConfig},
-    ws::{SupervisedConfig, WsFeedEndpoint, WsRunnerConfig, run_feed, run_feed_supervised},
+    ws::{
+        EventListener, RunnerEvent, SupervisedConfig, WsFeedEndpoint, WsRunnerConfig, run_feed,
+        run_feed_supervised,
+    },
 };
+use std::sync::Mutex;
 
 // ── Stub connector ─────────────────────────────────────────────────────────────
 
@@ -128,6 +134,7 @@ fn fast_config(max_reconnect_attempts: u32) -> WsRunnerConfig {
         // dedicated connect-/idle-timeout tests below use tight values.
         connect_timeout_secs: 10,
         idle_timeout_secs: 0, // disable idle check for the default tests
+        on_event: None,
     }
 }
 
@@ -339,6 +346,7 @@ fn fast_supervised(max_reconnect_attempts: u32, max_refresh_cycles: u32) -> Supe
             max_reconnect_attempts,
             connect_timeout_secs: 10,
             idle_timeout_secs: 0,
+            on_event: None,
         },
         max_refresh_cycles,
         // Keep the inter-cycle delay tiny so the suite still finishes fast.
@@ -671,6 +679,7 @@ async fn supervised_shuts_down_during_refresh() {
             max_reconnect_attempts: 1,
             connect_timeout_secs: 10,
             idle_timeout_secs: 0,
+            on_event: None,
         },
         max_refresh_cycles: 5,
         refresh_delay_secs: 10,
@@ -734,6 +743,7 @@ async fn run_feed_connect_timeout_aborts_handshake() {
         max_reconnect_attempts: 1,
         connect_timeout_secs: 1,
         idle_timeout_secs: 0,
+        on_event: None,
     };
 
     let connector = StubConnector::new(&url);
@@ -789,6 +799,7 @@ async fn run_feed_idle_timeout_drops_silent_connection() {
         max_reconnect_attempts: 1,
         connect_timeout_secs: 5,
         idle_timeout_secs: 2,
+        on_event: None,
     };
 
     let connector = StubConnector::new(&url);
@@ -806,5 +817,169 @@ async fn run_feed_idle_timeout_drops_silent_connection() {
     assert!(
         matches!(result, Err(ExchangeError::WsDisconnected { .. })),
         "expected WsDisconnected from idle path, got {result:?}"
+    );
+}
+
+// ── Observability tests ───────────────────────────────────────────────────────
+
+/// Helper: collect events into a shared Vec via an [`EventListener`].
+fn collecting_listener() -> (Arc<Mutex<Vec<RunnerEvent>>>, EventListener) {
+    let events = Arc::new(Mutex::new(Vec::new()));
+    let listener = {
+        let events = events.clone();
+        EventListener::new(move |ev| events.lock().unwrap().push(ev))
+    };
+    (events, listener)
+}
+
+/// Server closes every connection immediately. With `max_reconnect_attempts = 2`,
+/// the listener should observe two `SessionEnded` events (both with
+/// `cascade_start = true`) followed by `ReconnectsExhausted { attempts: 3 }`
+/// — `attempts` is the value at the moment the budget was breached, i.e.
+/// `max + 1`.
+#[tokio::test]
+async fn runner_emits_session_ended_and_exhausted_events() {
+    let (url, listener_socket) = bind_local().await;
+    let (_sd_tx, sd_rx) = watch::channel(false);
+
+    tokio::spawn(async move {
+        loop {
+            let Ok((stream, _)) = listener_socket.accept().await else {
+                break;
+            };
+            let Ok(mut ws) = accept_async(stream).await else {
+                continue;
+            };
+            let _ = ws.close(None).await;
+        }
+    });
+
+    let (events, listener) = collecting_listener();
+    let mut config = fast_config(2);
+    config.on_event = Some(listener);
+
+    let connector = StubConnector::new(&url);
+    let (tx, _rx) = mpsc::channel::<DataMessage>(16);
+
+    let result = tokio::time::timeout(
+        Duration::from_secs(10),
+        run_feed(url, vec![], connector, tx, config, sd_rx),
+    )
+    .await
+    .expect("run_feed hung")
+    .err();
+
+    assert!(
+        matches!(result, Some(ExchangeError::WsDisconnected { .. })),
+        "expected WsDisconnected, got {result:?}"
+    );
+
+    // Snapshot the events and release the lock immediately.
+    let events: Vec<RunnerEvent> = events.lock().unwrap().clone();
+    let session_ends = events
+        .iter()
+        .filter(|e| matches!(e, RunnerEvent::SessionEnded { .. }))
+        .count();
+    assert!(
+        session_ends >= 2,
+        "expected ≥ 2 SessionEnded events, got {session_ends}: {events:?}"
+    );
+
+    // First session-end should be flagged as a cascade start (attempt 0,
+    // server closes immediately = sub-5 s uptime).
+    let first = events
+        .iter()
+        .find_map(|e| match e {
+            RunnerEvent::SessionEnded {
+                attempt,
+                cascade_start,
+                ..
+            } => Some((*attempt, *cascade_start)),
+            _ => None,
+        })
+        .expect("missing SessionEnded");
+    assert_eq!(first, (0, true), "first SessionEnded should be cascade_start");
+
+    // Final event must be ReconnectsExhausted with the breach attempt count.
+    let exhausted = events.iter().rev().find_map(|e| match e {
+        RunnerEvent::ReconnectsExhausted { attempts } => Some(*attempts),
+        _ => None,
+    });
+    assert_eq!(
+        exhausted,
+        Some(3),
+        "expected ReconnectsExhausted(3) (max=2, breached at 3): {events:?}"
+    );
+}
+
+/// Supervised path with `max_refresh_cycles = 2` and a server that closes
+/// every connection. Expect two `TokenRefresh` events (cycle 1, cycle 2)
+/// followed by `RefreshExhausted { cycles: 3 }` once the budget is breached.
+#[tokio::test]
+async fn supervised_emits_token_refresh_and_exhausted_events() {
+    let (url, listener_socket) = bind_local().await;
+    let (_sd_tx, sd_rx) = watch::channel(false);
+
+    tokio::spawn(async move {
+        loop {
+            let Ok((stream, _)) = listener_socket.accept().await else {
+                break;
+            };
+            let Ok(mut ws) = accept_async(stream).await else {
+                continue;
+            };
+            let _ = ws.close(None).await;
+        }
+    });
+
+    let (events, listener) = collecting_listener();
+    let mut config = fast_supervised(1, 2);
+    config.runner.on_event = Some(listener);
+
+    let connector = StubConnector::new(&url);
+    let (tx, _rx) = mpsc::channel::<DataMessage>(16);
+
+    let refresh = {
+        let url = url.clone();
+        move || {
+            let url = url.clone();
+            async move {
+                Ok(WsFeedEndpoint {
+                    url,
+                    subscriptions: vec![],
+                })
+            }
+        }
+    };
+
+    let _ = tokio::time::timeout(
+        Duration::from_secs(10),
+        run_feed_supervised(connector, tx, config, sd_rx, refresh),
+    )
+    .await
+    .expect("supervisor hung");
+
+    let events: Vec<RunnerEvent> = events.lock().unwrap().clone();
+    let refresh_cycles: Vec<u32> = events
+        .iter()
+        .filter_map(|e| match e {
+            RunnerEvent::TokenRefresh { cycle } => Some(*cycle),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(
+        refresh_cycles,
+        vec![1, 2],
+        "expected TokenRefresh for cycles 1,2: {events:?}"
+    );
+
+    let exhausted = events.iter().rev().find_map(|e| match e {
+        RunnerEvent::RefreshExhausted { cycles } => Some(*cycles),
+        _ => None,
+    });
+    assert_eq!(
+        exhausted,
+        Some(3),
+        "expected RefreshExhausted(3) once budget breached: {events:?}"
     );
 }

@@ -98,12 +98,28 @@ outer wrapper, gated behind WsDisconnected.
     - run_feed_idle_timeout_drops_silent_connection — server accepts
       WS then goes silent; verifies idle path fires from the ping tick.
 
+• Reconnect-event observability (src/ws/runner.rs). New types:
+    - RunnerEvent enum (SessionEnded, ReconnectsExhausted, TokenRefresh,
+      RefreshExhausted) — non_exhaustive so future variants don't break
+      downstream match arms.
+    - EventListener newtype wrapping Arc<dyn Fn(RunnerEvent)+Send+Sync>;
+      Clone + manual Debug ("<callback>") so WsRunnerConfig still
+      derives Debug+Clone cleanly.
+    - on_event: Option<EventListener> on WsRunnerConfig; emit() helper
+      is a no-op when None.
+  Both run_feed and run_feed_supervised emit through the same listener
+  so the bot can wire a single closure and get counts for both granular
+  reconnects and cascade-triggered token refreshes (the Redis hourly
+  counter use case).
+  Two new integration tests in tests/ws_types.rs collect events through
+  an Arc<Mutex<Vec<RunnerEvent>>> shared with the listener:
+    - runner_emits_session_ended_and_exhausted_events
+    - supervised_emits_token_refresh_and_exhausted_events
+
 ⚠  Still open (disconnection hardening — from log analysis)
 • Fix 3 — tighter bare-runner defaults? (debatable now that Fix 1
   exists). Default WsRunnerConfig still has max_reconnect_attempts = 10
   for backwards compatibility; SupervisedConfig overrides to 3.
-• Reconnect-event observability — emit a counter/callback so the bot
-  can log refresh cycles to Redis without log scraping.
 
 ⚠  Still open (architecture)
 • Multi-exchange support — only KuCoin is implemented; the

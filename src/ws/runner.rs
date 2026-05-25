@@ -66,6 +66,75 @@ use crate::actors::{DataMessage, ExchangeConnector};
 use crate::error::{ExchangeError, Result};
 use crate::ws::types::WsMessage;
 
+// ── Observability ─────────────────────────────────────────────────────────────
+
+/// Notable transitions emitted by the runner so callers can update metrics,
+/// dashboards, or alerting without log scraping.
+///
+/// Plug in via [`WsRunnerConfig::on_event`] and the runner will hand each
+/// event to your callback synchronously. Keep the callback fast — push to a
+/// channel or atomic counter rather than blocking on network/I/O.
+#[non_exhaustive]
+#[derive(Debug, Clone)]
+pub enum RunnerEvent {
+    /// A WS session ended via the Disconnected path (not a clean shutdown).
+    /// The runner will sleep `reconnect_delay` and try again unless the
+    /// budget is exhausted (in which case [`Self::ReconnectsExhausted`]
+    /// follows). `cascade_start` mirrors the condition Fix 2 uses to
+    /// promote the close-frame log to WARN.
+    SessionEnded {
+        /// Attempt counter at the moment the session began (0 = first try).
+        attempt: u32,
+        /// How many seconds the recv loop was active before disconnect.
+        uptime_secs: u64,
+        /// `true` when this looks like a stale-token cascade start
+        /// (`attempt == 0` AND `uptime_secs < 5`).
+        cascade_start: bool,
+    },
+    /// The runner exhausted `max_reconnect_attempts` and is about to return
+    /// [`ExchangeError::WsDisconnected`] to the caller.
+    ReconnectsExhausted {
+        /// Final attempt count when the budget was breached.
+        attempts: u32,
+    },
+    /// [`run_feed_supervised`] is invoking the refresh closure after an
+    /// inner cycle exhausted. Emitted before the closure is awaited.
+    TokenRefresh {
+        /// 1-based cycle number — `1` is the first refresh, etc.
+        cycle: u32,
+    },
+    /// [`run_feed_supervised`] exhausted `max_refresh_cycles` and is about
+    /// to return [`ExchangeError::WsDisconnected`].
+    RefreshExhausted {
+        /// Number of refresh cycles attempted.
+        cycles: u32,
+    },
+}
+
+/// Type-erased synchronous listener for [`RunnerEvent`]s.
+///
+/// Constructed via [`EventListener::new`] from any
+/// `Fn(RunnerEvent) + Send + Sync + 'static`. Cheap to clone — wraps an
+/// `Arc<dyn Fn ...>` internally.
+#[derive(Clone)]
+pub struct EventListener(Arc<dyn Fn(RunnerEvent) + Send + Sync>);
+
+impl EventListener {
+    /// Wrap a closure as an [`EventListener`].
+    pub fn new<F>(f: F) -> Self
+    where
+        F: Fn(RunnerEvent) + Send + Sync + 'static,
+    {
+        Self(Arc::new(f))
+    }
+}
+
+impl std::fmt::Debug for EventListener {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("EventListener(<callback>)")
+    }
+}
+
 // ── Config ────────────────────────────────────────────────────────────────────
 
 /// Tuning parameters for the WS runner.
@@ -104,6 +173,11 @@ pub struct WsRunnerConfig {
     /// missed pongs — almost certainly a dead connection. Set to 0 to
     /// disable the idle check entirely.
     pub idle_timeout_secs: u64,
+    /// Optional listener for [`RunnerEvent`]s. Called synchronously from
+    /// inside the runner — push to a channel rather than blocking on
+    /// network/I/O. Both [`run_feed`] and [`run_feed_supervised`] use this
+    /// listener.
+    pub on_event: Option<EventListener>,
 }
 
 impl Default for WsRunnerConfig {
@@ -115,6 +189,7 @@ impl Default for WsRunnerConfig {
             max_reconnect_attempts: 10,
             connect_timeout_secs: 10,
             idle_timeout_secs: 60,
+            on_event: None,
         }
     }
 }
@@ -127,6 +202,15 @@ impl WsRunnerConfig {
         Self {
             ping_interval_secs,
             ..Default::default()
+        }
+    }
+
+    /// Emit `event` to the listener if one is configured. No-op when
+    /// `on_event` is `None`, so wiring up a listener is a single call.
+    #[inline]
+    fn emit(&self, event: RunnerEvent) {
+        if let Some(listener) = &self.on_event {
+            (listener.0)(event);
         }
     }
 }
@@ -264,14 +348,23 @@ pub async fn run_feed(
                 return Ok(());
             }
             SessionOutcome::Disconnected => {
+                let uptime_secs = session_start.elapsed().as_secs();
+                // `attempts` here is the value the just-ended session was
+                // running under; emit the event before mutating it.
+                config.emit(RunnerEvent::SessionEnded {
+                    attempt: attempts,
+                    uptime_secs,
+                    cascade_start: is_cascade_start(attempts, uptime_secs),
+                });
+
                 // If the session was stable for long enough, treat this as
                 // a fresh start rather than a retry.  Normal causes: token
                 // expiry (KuCoin tokens last ~24 h), rolling server restart,
                 // or a clean network handoff.
-                if session_start.elapsed().as_secs() >= STABLE_SESSION_SECS {
+                if uptime_secs >= STABLE_SESSION_SECS {
                     info!(
                         exchange = connector.exchange_name(),
-                        uptime_secs = session_start.elapsed().as_secs(),
+                        uptime_secs,
                         "WS stable session ended — resetting reconnect counter",
                     );
                     attempts = 0;
@@ -283,6 +376,7 @@ pub async fn run_feed(
                             exchange = connector.exchange_name(),
                             "WS max reconnect attempts exhausted"
                         );
+                        config.emit(RunnerEvent::ReconnectsExhausted { attempts });
                         return Err(ExchangeError::WsDisconnected {
                             url: url.to_string(),
                             attempts,
@@ -744,6 +838,9 @@ where
                         exchange = connector.exchange_name(),
                         "supervisor exhausted refresh budget"
                     );
+                    config
+                        .runner
+                        .emit(RunnerEvent::RefreshExhausted { cycles: cycle });
                     return Err(ExchangeError::WsDisconnected { url, attempts });
                 }
 
@@ -783,6 +880,7 @@ where
                     () = tokio::time::sleep(Duration::from_secs(config.refresh_delay_secs)) => {}
                 }
 
+                config.runner.emit(RunnerEvent::TokenRefresh { cycle });
                 match refresh().await {
                     Ok(endpoint) => {
                         info!(
