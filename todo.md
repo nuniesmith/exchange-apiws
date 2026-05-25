@@ -256,18 +256,37 @@ Tests:
   endpoint plus a `411100 "UTA not enabled"` Api-error propagation
   test.
 
-### 2b. Spot margin orders
+### 2b. Spot margin orders ✓ DONE
 
-| Method | Endpoint |
-|--------|----------|
-| `place_margin_order(symbol, side, size, price, leverage)` | `POST /api/v1/margin/order` |
-| `get_margin_order(order_id)` | `GET /api/v1/margin/orders/{id}` |
-| `cancel_margin_order(order_id)` | `DELETE /api/v1/margin/orders/{id}` |
-| `get_margin_fills(symbol)` | `GET /api/v1/margin/fills` |
-| `get_margin_balance(currency)` | `GET /api/v1/margin/account` |
+Implemented in `src/rest/margin.rs` as new methods on `KuCoinClient`.
+Sizes/prices are base-asset string units on the wire (`"0.01"` BTC,
+not the integer contract counts the futures API uses); typed responses
+keep them as `String` and expose `_f64()` helpers for parse-on-demand.
 
-Add `src/rest/margin.rs`, re-export from `rest/mod.rs`, full wiremock
-coverage in `rest_mock.rs`.
+| Method | Endpoint | Returns |
+|--------|----------|---------|
+| `place_margin_order(symbol, side, type, size, price, MarginModel, auto_borrow, tif)` | `POST /api/v1/margin/order` | `MarginOrderResponse` (orderId + borrowSize + loanApplyId) |
+| `get_margin_order(order_id)` | `GET /api/v1/margin/orders/{id}` | `MarginOrderDetail` |
+| `cancel_margin_order(order_id)` | `DELETE /api/v1/margin/orders/{id}` | `CancelMarginOrderResponse` (empty list if already done) |
+| `get_margin_fills(symbol)` | `GET /api/v1/margin/fills` | `Vec<MarginFill>` (unwraps the `items` page) |
+| `get_margin_balance()` | `GET /api/v1/margin/account` | `MarginAccountV1` (legacy — prefer v3 cross/isolated for new code) |
+
+New types:
+- `MarginModel { Cross, Isolated }` enum encoding the `marginModel` field.
+- `MarginOrderResponse` — orderId + optional borrowSize / loanApplyId.
+- `MarginOrderDetail` — full lifecycle state with `is_active` /
+  `cancel_exist` flags and `size_f64()` / `price_f64()` parse helpers.
+- `CancelMarginOrderResponse` — typed `cancelled_order_ids` list.
+- `MarginFill` — single-fill detail (string-encoded numerics).
+- `MarginAccountV1` + `MarginAccountAssetV1` — legacy v1 account shape.
+
+Tests:
+- 7 unit tests in `src/rest/margin.rs::tests` covering all response
+  shapes (with/without borrow, helper parsers, empty cancel list,
+  account assets, wire-format enum).
+- 7 wiremock integration tests in `tests/rest_mock.rs` — one per endpoint,
+  the "already done" empty-cancel case, the items-page unwrap pattern,
+  and an Api-error propagation test for `place_margin_order`.
 
 ### 2c. WebSocket order placement
 
