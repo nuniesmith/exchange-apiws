@@ -288,20 +288,47 @@ Tests:
   the "already done" empty-cancel case, the items-page unwrap pattern,
   and an Api-error propagation test for `place_margin_order`.
 
-### 2c. WebSocket order placement
+### 2c. WebSocket order placement ✓ DONE
 
 KuCoin's `wsapi.kucoin.com` supports placing and cancelling orders over WS
-for ultra-low latency. This requires a **private** WS token and a separate
-connection to `wss://wsapi.kucoin.com`.
+for ultra-low latency. Implemented in `src/ws/orders.rs` as
+`WsOrderClient` with a request/response correlation pipeline.
 
-Scope:
-- `src/ws/orders.rs` (new) — `WsOrderClient` wrapping a tungstenite sink
-- `place_order_ws(symbol, side, size, leverage, order_type, price)` → sends
-  JSON frame, awaits ack with matching `clientOid`
-- `cancel_order_ws(order_id)` → same pattern
-- Response matching by `clientOid` in a `HashMap<String, oneshot::Sender>`
-- Rate limit: 100 msg/10s (shared with the existing runner guard)
-- Tests: local tungstenite echo server verifying frame shape and ack routing
+- `WsOrderClient::connect(ws_url)` opens the WS, spawns a writer task
+  (drains an mpsc with the shared `WsMsgGuard` between sends) and a
+  reader task (routes inbound frames to pending `oneshot::Sender`s via
+  `clientOid` lookup in an `Arc<Mutex<HashMap<...>>>`).
+- `place_order(symbol, side, size, leverage, type, price)` builds the
+  KuCoin frame (`{type:"openOrder", topic:"/contractMarket/order",
+  data:{clientOid, side, symbol, type, size, leverage, price?}}`),
+  pushes it to the outbound queue, awaits the matching `WsOrderAck`.
+- `cancel_order(order_id)` follows the same shape with `cancelOrder`.
+- `send_raw(client_oid, frame)` is the escape hatch for callers that
+  need to construct a frame the canonical helpers don't model.
+- 5 s default per-request timeout; tunable via
+  `.with_request_timeout(d)`. Pending entries are cleaned up on
+  timeout so a late ack doesn't linger.
+- `close()` tears the connection down; any still-pending requests get
+  a `connection_closed` sentinel `WsOrderAck` so callers don't hang.
+- Rate-limit guard from runner.rs is now `pub(crate) WsMsgGuard` —
+  same 100 msg/10s sliding window shared between the data-feed runner
+  and the order client (per-connection, not per-account).
+
+Wire format caveat: KuCoin's wsapi schema isn't as exhaustively
+documented as the public feed; the request/response shape used here
+matches current public docs but may need adjustment if the schema
+diverges. `build_place_order_frame` / `build_cancel_order_frame` are
+public so callers can copy the canonical shape and route a tweaked
+version via `send_raw`.
+
+Tests:
+- 8 unit tests in `src/ws/orders.rs::tests` covering frame builders
+  (limit + market), inbound parser (`ack`, `error`, `welcome`, `pong`,
+  missing `clientOid`).
+- 5 integration tests in `tests/ws_orders_mock.rs` spinning up a local
+  tokio-tungstenite server: round-trip, **concurrent out-of-order
+  routing** (3 in-flight, server replies in reverse), error frame,
+  request timeout, connection-close pending-cleanup.
 
 ---
 
@@ -481,23 +508,49 @@ API keys available. Signing: HMAC-SHA512 over
 Add `src/kraken/auth.rs` (separate from `src/auth.rs` which is KuCoin-
 specific).
 
-### 5a. Public REST (`src/kraken/rest.rs`)
+### 5a. Public REST (`src/kraken/rest.rs`) ✓ DONE
 
-Base URL: `https://api.kraken.com`.
+Base URL: `https://api.kraken.com`. Uses `PublicRestClient`; the
+Kraken envelope `{"result":...,"error":[]}` is unwrapped by a free
+function `unwrap_kraken_envelope<T>` (public for external use). A
+non-empty `error` array surfaces as `ExchangeError::Api` with all
+messages joined by `"; "`.
 
-| Method | Endpoint |
-|--------|----------|
-| `get_assets()` | `GET /0/public/Assets` |
-| `get_asset_pairs(pair)` | `GET /0/public/AssetPairs` |
-| `get_ticker(pair)` | `GET /0/public/Ticker` |
-| `get_ohlc(pair, interval)` | `GET /0/public/OHLC` |
-| `get_orderbook(pair, count)` | `GET /0/public/Depth` |
-| `get_recent_trades(pair)` | `GET /0/public/Trades` |
-| `get_spread(pair)` | `GET /0/public/Spread` |
-| `get_system_status()` | `GET /0/public/SystemStatus` |
+| Method | Endpoint | Returns |
+|--------|----------|---------|
+| `get_system_status()` | `/0/public/SystemStatus` | `KrakenSystemStatus` |
+| `get_assets()` | `/0/public/Assets` | `HashMap<String, KrakenAsset>` |
+| `get_asset_pairs(pair?)` | `/0/public/AssetPairs` | `HashMap<String, KrakenAssetPair>` |
+| `get_ticker(pair)` | `/0/public/Ticker` | `HashMap<String, KrakenTicker>` |
+| `get_orderbook(pair, count)` | `/0/public/Depth` | `HashMap<String, KrakenOrderBook>` |
+| `get_ohlc(pair, interval_mins)` | `/0/public/OHLC` | `serde_json::Value` (mixed pair+"last" shape) |
+| `get_recent_trades(pair)` | `/0/public/Trades` | `serde_json::Value` (same) |
+| `get_spread(pair)` | `/0/public/Spread` | `serde_json::Value` (same) |
 
-Envelope: `{"result":{…},"error":[]}` — non-empty `error` array →
-`ExchangeError::Api`.
+Kraken-specific wire-format notes captured:
+- OHLC/Trades/Spread mix per-pair arrays with a `"last"` cursor key
+  at the same level — surfaced as `serde_json::Value` so callers can
+  pick whichever shape suits them (paginate via `last`, iterate
+  per-pair). A typed custom-Deserialize wrapper can be added later
+  if there's demand.
+- KrakenTicker fields use tuple wire shapes (`a/b/c/v/p/t/l/h`);
+  the struct stores them as-is and exposes `ask_price()`, `bid_price()`,
+  `last_price()`, `volume_24h()`, `high_24h()`, `low_24h()` helpers.
+- KrakenOrderBook levels are `(price_str, volume_str, timestamp_f64)`
+  — Kraken sends price/volume as strings but the timestamp as a JSON
+  number; the tuple type accommodates both. `bids_f64()` / `asks_f64()`
+  drop the timestamp column for downstream cross-exchange routing.
+- KrakenAsset / KrakenAssetPair use `#[serde(default)]` on optional
+  fields (`collateral_value`, `status`, `wsname`) since Kraken omits
+  them on inactive or non-collateral assets.
+
+Tests:
+- 6 unit tests in `src/kraken/rest.rs::tests` covering envelope
+  unwrap (success + Api error with joined messages), ticker tuple
+  helpers, orderbook helper, missing-optionals for Asset and AssetPair.
+- 10 wiremock integration tests in `tests/kraken_rest_mock.rs` —
+  one per endpoint (including both filtered and unfiltered
+  AssetPairs) plus an error-envelope propagation test.
 
 ### 5b. Private REST (authenticated)
 

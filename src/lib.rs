@@ -77,6 +77,7 @@ pub mod client;
 pub mod connectors;
 pub mod error;
 pub mod http;
+pub mod kraken;
 pub mod rest;
 pub mod types;
 pub mod ws;
@@ -85,6 +86,7 @@ pub mod ws;
 
 pub use binance::{BinanceConnector, BinanceRestClient};
 pub use bybit::{BybitCategory, BybitConnector, BybitRestClient};
+pub use kraken::KrakenRestClient;
 pub use client::{Credentials, KuCoinClient};
 pub use connectors::{ExchangeConfig, KuCoin, KucoinEnv};
 pub use error::{ExchangeError, Result};
@@ -94,6 +96,6 @@ pub use types::{Candle, OrderType, STP, Side, TimeInForce};
 // ── WS convenience re-exports ─────────────────────────────────────────────────
 
 pub use ws::{
-    EventListener, KucoinConnector, RunnerEvent, SupervisedConfig, WsFeedEndpoint, WsRunnerConfig,
-    run_feed, run_feed_supervised,
+    EventListener, KucoinConnector, RunnerEvent, SupervisedConfig, WsFeedEndpoint, WsOrderAck,
+    WsOrderClient, WsRunnerConfig, run_feed, run_feed_supervised,
 };
