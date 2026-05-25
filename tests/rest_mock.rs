@@ -1572,3 +1572,154 @@ async fn get_transfer_list_max_count_capped_at_50() {
 
     assert!(records.is_empty());
 }
+
+// ── UTA / margin endpoints ────────────────────────────────────────────────────
+
+#[tokio::test]
+async fn get_uta_account_summary_parses_fields() {
+    let server = MockServer::start().await;
+
+    Mock::given(method("GET"))
+        .and(path("/api/v3/account/summary"))
+        .respond_with(
+            ResponseTemplate::new(200).set_body_json(ok_envelope(serde_json::json!({
+                "accountEquityTotal":   "10000.00",
+                "unrealisedPNLTotal":   "12.50",
+                "marginBalanceTotal":   "9987.50",
+                "positionMarginTotal":  "100.00",
+                "orderMarginTotal":     "50.00",
+                "frozenFundsTotal":     "0.00",
+                "availableBalanceTotal":"9837.50",
+                "totalCurrency":        "USDT"
+            }))),
+        )
+        .expect(1)
+        .mount(&server)
+        .await;
+
+    let summary = sim_client(&server.uri())
+        .get_uta_account_summary()
+        .await
+        .expect("uta summary");
+    assert!((summary.account_equity_total - 10_000.0).abs() < 1e-6);
+    assert!((summary.unrealised_pnl_total - 12.5).abs() < 1e-9);
+    assert_eq!(summary.total_currency, "USDT");
+}
+
+#[tokio::test]
+async fn get_cross_margin_accounts_parses_assets() {
+    let server = MockServer::start().await;
+
+    Mock::given(method("GET"))
+        .and(path("/api/v3/margin/accounts"))
+        .respond_with(
+            ResponseTemplate::new(200).set_body_json(ok_envelope(serde_json::json!({
+                "totalAssetOfQuoteCurrency":    "10000.0",
+                "totalLiabilityOfQuoteCurrency": "0.0",
+                "debtRatio":                     "0.0",
+                "status":                        "EFFECTIVE",
+                "assets": [{
+                    "currency":         "USDT",
+                    "borrowEnabled":    true,
+                    "repayEnabled":     true,
+                    "transferEnabled":  true,
+                    "borrowed":         "0.0",
+                    "totalAsset":       "10000.0",
+                    "available":        "10000.0",
+                    "hold":             "0.0",
+                    "maxBorrowSize":    "5000.0"
+                }]
+            }))),
+        )
+        .expect(1)
+        .mount(&server)
+        .await;
+
+    let m = sim_client(&server.uri())
+        .get_cross_margin_accounts()
+        .await
+        .expect("cross margin");
+    assert_eq!(m.status, "EFFECTIVE");
+    assert_eq!(m.assets.len(), 1);
+    assert_eq!(m.assets[0].currency, "USDT");
+    assert_eq!(m.assets[0].max_borrow_size, Some(5_000.0));
+}
+
+#[tokio::test]
+async fn get_isolated_margin_accounts_parses_pairs() {
+    let server = MockServer::start().await;
+
+    Mock::given(method("GET"))
+        .and(path("/api/v1/isolated/accounts"))
+        .respond_with(
+            ResponseTemplate::new(200).set_body_json(ok_envelope(serde_json::json!({
+                "totalConversionBalance":     "1000.0",
+                "liabilityConversionBalance": "0.0",
+                "assets": [{
+                    "symbol":    "BTC-USDT",
+                    "status":    "EFFECTIVE",
+                    "debtRatio": "0.0",
+                    "baseAsset": {
+                        "currency":         "BTC",
+                        "totalBalance":     "0.01",
+                        "holdBalance":      "0.0",
+                        "availableBalance": "0.01",
+                        "liability":        "0.0",
+                        "interest":         "0.0",
+                        "borrowableAmount": "0.005",
+                        "borrowEnabled":    true,
+                        "transferInEnabled":true,
+                        "repayEnabled":     true
+                    },
+                    "quoteAsset": {
+                        "currency":         "USDT",
+                        "totalBalance":     "500.0",
+                        "holdBalance":      "0.0",
+                        "availableBalance": "500.0",
+                        "liability":        "0.0",
+                        "interest":         "0.0",
+                        "borrowableAmount": "250.0",
+                        "borrowEnabled":    true,
+                        "transferInEnabled":true,
+                        "repayEnabled":     true
+                    }
+                }]
+            }))),
+        )
+        .expect(1)
+        .mount(&server)
+        .await;
+
+    let m = sim_client(&server.uri())
+        .get_isolated_margin_accounts()
+        .await
+        .expect("isolated margin");
+    assert_eq!(m.total_conversion_balance, Some(1_000.0));
+    assert_eq!(m.assets.len(), 1);
+    assert_eq!(m.assets[0].symbol, "BTC-USDT");
+    assert_eq!(m.assets[0].base_asset.currency, "BTC");
+    assert_eq!(m.assets[0].quote_asset.borrowable_amount, Some(250.0));
+}
+
+#[tokio::test]
+async fn uta_account_summary_propagates_api_error() {
+    let server = MockServer::start().await;
+
+    Mock::given(method("GET"))
+        .and(path("/api/v3/account/summary"))
+        .respond_with(
+            ResponseTemplate::new(200).set_body_json(err_envelope("411100", "UTA not enabled")),
+        )
+        .expect(1)
+        .mount(&server)
+        .await;
+
+    let result = sim_client(&server.uri()).get_uta_account_summary().await;
+    match result {
+        Err(ExchangeError::Api { code, message }) => {
+            assert_eq!(code, "411100");
+            assert!(message.contains("UTA not enabled"));
+        }
+        other => panic!("expected Api error, got {other:?}"),
+    }
+}
