@@ -190,7 +190,7 @@ Add a small `Envelope` trait (or free function) per exchange crate module
 so each client can unwrap its own format and surface errors as
 `ExchangeError::Api`.
 
-### 1c. DataMessage additions
+### 1c. DataMessage additions ✓ DONE
 
 New feed types that don't map to existing variants:
 
@@ -199,8 +199,28 @@ New feed types that don't map to existing variants:
 | `Candle(CandleData)` | Binance kline stream, Bybit kline, Kraken OHLC, Crypto.com candlestick |
 | `FundingRate(FundingData)` | Binance mark-price stream, Bybit ticker extended |
 
-`CandleData` fields: `symbol`, `exchange`, `interval`, `open_ts`,
-`open`, `high`, `low`, `close`, `volume`, `is_closed`, `receipt_ts`.
+Added to `src/actors.rs`:
+- `CandleData { symbol, exchange, interval, open_ts, open, high, low,
+  close, volume, is_closed, receipt_ts }` — all f64 OHLCV + ms
+  timestamps. `is_closed` distinguishes finalised bars from in-progress
+  updates so consumers can filter.
+- `FundingData { symbol, exchange, funding_rate, next_funding_time,
+  mark_price: Option<f64>, index_price: Option<f64>, exchange_ts,
+  receipt_ts }` — Optional mark/index because Binance's markPrice
+  stream bundles them but Bybit's bare funding tick does not.
+- `DataMessage::Candle(CandleData)` and `DataMessage::FundingRate(FundingData)`
+  added to the `#[non_exhaustive]` enum so existing match arms still
+  compile (forced catch-all).
+
+KuCoin doesn't use these — its funding info already routes through
+`DataMessage::InstrumentEvent` (subject `"funding.rate"`) and klines
+are REST-only on KuCoin's contractMarket feed.
+
+Tests in `src/actors.rs::tests`:
+- candle_data_serde_round_trip
+- funding_data_serde_round_trip_with_optionals
+- funding_data_serde_round_trip_without_optionals
+- data_message_new_variants_match (compile-time match smoke test)
 
 ---
 
