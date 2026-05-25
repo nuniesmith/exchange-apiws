@@ -11,6 +11,11 @@
 //!   with a cap of [`MAX_RATE_LIMIT_RETRIES`] to prevent infinite loops
 //! - Unwraps KuCoin's `{"code":"200000","data":{...}}` envelope
 //! - Percent-encodes all query parameter values before signing
+//!
+//! Shared helpers (`percent_encode`, `build_query_string`, `jitter_secs`)
+//! and the retry tuning constants live in [`crate::http`] so the
+//! authenticated [`KuCoinClient`] and the public [`PublicRestClient`] stay
+//! in sync.
 
 use std::time::Duration;
 
@@ -22,6 +27,9 @@ use zeroize::ZeroizeOnDrop;
 
 use crate::auth::build_headers;
 use crate::error::{ExchangeError, Result};
+use crate::http::{
+    DEFAULT_BACKOFF, DEFAULT_RETRIES, MAX_RATE_LIMIT_RETRIES, build_query_string, jitter_secs,
+};
 
 // ── Credentials ───────────────────────────────────────────────────────────────
 
@@ -80,74 +88,6 @@ impl Credentials {
 fn env(key: &str) -> Result<String> {
     std::env::var(key).map_err(|_| ExchangeError::Config(format!("{key} not set")))
 }
-
-// ── Query string helpers ──────────────────────────────────────────────────────
-
-/// Percent-encode a single query parameter value.
-///
-/// Only unreserved characters (`A–Z`, `a–z`, `0–9`, `-`, `_`, `.`, `~`) are
-/// left unencoded. Everything else is percent-encoded as `%XX`. This matches
-/// RFC 3986 §2.3 and is safe for use in both the URL and the HMAC pre-hash.
-fn percent_encode(s: &str) -> String {
-    let mut out = String::with_capacity(s.len());
-    for byte in s.bytes() {
-        match byte {
-            b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'-' | b'_' | b'.' | b'~' => {
-                out.push(byte as char);
-            }
-            b => {
-                out.push('%');
-                out.push(char::from_digit(u32::from(b) >> 4, 16).unwrap().to_ascii_uppercase());
-                out.push(char::from_digit(u32::from(b) & 0xF, 16).unwrap().to_ascii_uppercase());
-            }
-        }
-    }
-    out
-}
-
-/// Build a percent-encoded query string from key-value pairs.
-///
-/// Returns an empty string when `params` is empty, otherwise
-/// `"?key=value&key2=value2"` with all values percent-encoded.
-fn build_query_string(params: &[(&str, &str)]) -> String {
-    if params.is_empty() {
-        return String::new();
-    }
-    let pairs: Vec<String> = params
-        .iter()
-        .map(|(k, v)| format!("{}={}", percent_encode(k), percent_encode(v)))
-        .collect();
-    format!("?{}", pairs.join("&"))
-}
-
-// ── Jitter ────────────────────────────────────────────────────────────────────
-
-/// Return a ±25 % jitter factor for `base_secs`.
-///
-/// Uses sub-second system time as a cheap entropy source — no `rand`
-/// dependency needed. The distribution isn't perfectly uniform, but it's
-/// sufficient to spread out concurrent retry bursts.
-fn jitter_secs(base: f64) -> f64 {
-    let nanos = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .unwrap_or_default()
-        .subsec_nanos();
-    // Map [0, 1_000_000_000) → [-0.25, +0.25)
-    let factor = (nanos as f64 / 1_000_000_000.0 - 0.5) * 0.5;
-    base * factor
-}
-
-// ── Retry constants ───────────────────────────────────────────────────────────
-
-/// Default number of HTTP retry attempts for transient failures.
-const DEFAULT_RETRIES: u32 = 3;
-
-/// Default exponential backoff base (seconds).
-const DEFAULT_BACKOFF: f64 = 1.5;
-
-/// Maximum number of consecutive 429 rate-limit sleeps per call before giving
-/// up. This prevents an infinite loop if the exchange keeps returning 429.
-const MAX_RATE_LIMIT_RETRIES: u32 = 5;
 
 // ── Client ────────────────────────────────────────────────────────────────────
 
@@ -384,42 +324,3 @@ impl KuCoinClient {
     }
 }
 
-// ── Unit tests ────────────────────────────────────────────────────────────────
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn percent_encode_leaves_unreserved_chars_unchanged() {
-        assert_eq!(percent_encode("XBTUSDTM"), "XBTUSDTM");
-        assert_eq!(percent_encode("abc-123_def.ghi~"), "abc-123_def.ghi~");
-    }
-
-    #[test]
-    fn percent_encode_encodes_special_chars() {
-        assert_eq!(percent_encode("a b"), "a%20b");
-        assert_eq!(percent_encode("a=b&c=d"), "a%3Db%26c%3Dd");
-        assert_eq!(percent_encode("a+b"), "a%2Bb");
-    }
-
-    #[test]
-    fn build_query_string_empty() {
-        assert_eq!(build_query_string(&[]), "");
-    }
-
-    #[test]
-    fn build_query_string_encodes_values() {
-        let qs = build_query_string(&[("symbol", "XBT USDT"), ("side", "buy&sell")]);
-        assert_eq!(qs, "?symbol=XBT%20USDT&side=buy%26sell");
-    }
-
-    #[test]
-    fn jitter_stays_within_25_percent() {
-        let base = 4.0_f64;
-        for _ in 0..100 {
-            let j = jitter_secs(base);
-            assert!(j.abs() <= base * 0.25 + 1e-9, "jitter {j} exceeded ±25% of {base}");
-        }
-    }
-}
