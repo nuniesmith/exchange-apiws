@@ -356,24 +356,44 @@ Tests:
 
 No API keys. All endpoints below are unauthenticated.
 
-### 4a. REST (`src/bybit/rest.rs`)
+### 4a. REST (`src/bybit/rest.rs`) ✓ DONE
 
 Uses `PublicRestClient` pointed at `https://api.bybit.com`.
 
-| Method | Endpoint |
-|--------|----------|
-| `get_klines(category, symbol, interval, limit)` | `GET /v5/market/kline` |
-| `get_orderbook(category, symbol, limit)` | `GET /v5/market/orderbook` |
-| `get_tickers(category, symbol)` | `GET /v5/market/tickers` |
-| `get_recent_trades(category, symbol, limit)` | `GET /v5/market/recent-trade` |
-| `get_instruments(category)` | `GET /v5/market/instruments-info` |
-| `get_funding_rate(symbol)` | `GET /v5/market/funding/history` |
-| `get_open_interest(symbol, interval)` | `GET /v5/market/open-interest` |
-| `get_long_short_ratio(symbol, period)` | `GET /v5/market/account-ratio` |
+| Method | Endpoint | Returns |
+|--------|----------|---------|
+| `get_klines(category, symbol, interval, limit)` | `GET /v5/market/kline` | `BybitListResult<BybitKline>` |
+| `get_orderbook(category, symbol, limit)` | `GET /v5/market/orderbook` | `BybitOrderBook` |
+| `get_tickers(category, Option<symbol>)` | `GET /v5/market/tickers` | `BybitListResult<BybitTicker>` |
+| `get_recent_trades(category, symbol, limit)` | `GET /v5/market/recent-trade` | `BybitListResult<BybitTrade>` |
+| `get_instruments(category)` | `GET /v5/market/instruments-info` | `serde_json::Value` |
+| `get_funding_rate(category, symbol, limit)` | `GET /v5/market/funding/history` | `BybitListResult<BybitFundingRate>` |
+| `get_open_interest(category, symbol, interval_time, limit)` | `GET /v5/market/open-interest` | `BybitListResult<BybitOpenInterest>` |
+| `get_long_short_ratio(category, symbol, period, limit)` | `GET /v5/market/account-ratio` | `BybitListResult<BybitLongShortRatio>` |
 
-`category` values: `"spot"`, `"linear"` (USDT perp), `"inverse"`.
-Envelope: `{"retCode":0,"result":{…}}` — unwrap or surface retCode != 0
-as `ExchangeError::Api`.
+`BybitCategory` enum encodes `"spot"`, `"linear"`, `"inverse"`. The
+envelope `{"retCode":N,"result":...,"retMsg":...}` is unwrapped by a
+free function `unwrap_bybit_envelope<T>` exposed for external use too —
+non-zero `retCode` surfaces as `ExchangeError::Api` with the code and
+`retMsg` preserved.
+
+Bybit's wire format is mostly stringified — kline rows are positional
+string arrays (custom Deserialize), most timestamps come as JSON
+strings (`str_i64` adapter), prices/qtys as strings (`str_f64`).
+`opt_str_f64` handles fields that vary across product classes (Spot
+omits funding/mark/index fields).
+
+Bridges:
+- `BybitKline::into_candle_data(symbol, interval)` → unified `CandleData`
+- `BybitFundingRate::into_funding_data()` → unified `FundingData`
+  (mark/index both `None` since this endpoint doesn't bundle them).
+
+Tests:
+- 7 unit tests in `src/bybit/rest.rs::tests` covering envelope unwrap
+  (success + Api-error), kline array Deserialize, into_candle_data,
+  orderbook short-key shape, category wire format, funding bridge.
+- 9 wiremock integration tests in `tests/bybit_rest_mock.rs` — one per
+  endpoint plus an error-envelope propagation test.
 
 ### 4b. WebSocket (`src/bybit/ws.rs`)
 
