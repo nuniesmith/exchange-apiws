@@ -107,6 +107,72 @@ pub struct OrderBookData {
     pub is_snapshot: bool,
 }
 
+/// A candlestick / OHLCV bar from a public market data feed.
+///
+/// Most exchanges push *in-progress* candles every few seconds with the
+/// final value flagged via `is_closed`. Skip non-closed candles if you only
+/// need finalised bars; consume both if you want intra-bar updates.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CandleData {
+    /// Instrument symbol (exchange-specific format, e.g. `"BTCUSDT"` or `"XBT/USD"`).
+    pub symbol: String,
+    /// Exchange identifier (e.g. `"binance"`).
+    pub exchange: String,
+    /// Exchange-specific interval label (`"1m"`, `"5m"`, `"1h"`, `"1d"`, …).
+    ///
+    /// Not normalised across exchanges; each connector emits whatever its
+    /// API exposes.
+    pub interval: String,
+    /// Candle open time as milliseconds since the Unix epoch.
+    pub open_ts: i64,
+    /// First trade price in the interval.
+    pub open: f64,
+    /// Highest trade price in the interval.
+    pub high: f64,
+    /// Lowest trade price in the interval.
+    pub low: f64,
+    /// Last trade price in the interval. Equals `open` if no trades occurred.
+    pub close: f64,
+    /// Base-asset volume traded during the interval.
+    pub volume: f64,
+    /// `true` once the interval has elapsed and the bar is finalised.
+    /// `false` for live in-progress updates within the current interval.
+    pub is_closed: bool,
+    /// Local receipt timestamp in milliseconds.
+    pub receipt_ts: i64,
+}
+
+/// A funding-rate event from a perpetual futures feed.
+///
+/// Funding payments accrue at fixed intervals (typically every 8 h on
+/// Binance/Bybit, every 4 h on Crypto.com); the rate published here is the
+/// one that will be applied at `next_funding_time`. The optional
+/// `mark_price` / `index_price` fields capture the bundle some feeds emit
+/// together (e.g. Binance's `<symbol>@markPrice` stream).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct FundingData {
+    /// Instrument symbol (exchange-specific format).
+    pub symbol: String,
+    /// Exchange identifier.
+    pub exchange: String,
+    /// Funding rate that will be applied at `next_funding_time`
+    /// (e.g. `0.0001` = 0.01 %, positive = longs pay shorts).
+    pub funding_rate: f64,
+    /// Milliseconds since the Unix epoch when the next funding payment
+    /// settles. Some feeds (Bybit ticker.extended) include the previous
+    /// settlement timestamp instead — treat as the most recent
+    /// settlement-related time.
+    pub next_funding_time: i64,
+    /// Mark price at the time of the event, if bundled by the feed.
+    pub mark_price: Option<f64>,
+    /// Underlying spot index price, if bundled by the feed.
+    pub index_price: Option<f64>,
+    /// Exchange timestamp in milliseconds.
+    pub exchange_ts: i64,
+    /// Local receipt timestamp in milliseconds.
+    pub receipt_ts: i64,
+}
+
 /// Unified market data message emitted by any exchange connector.
 ///
 /// Marked `#[non_exhaustive]` so new feed types (e.g. `FundingRate`) can be
@@ -120,6 +186,20 @@ pub enum DataMessage {
     Ticker(TickerData),
     /// An order book snapshot or incremental delta.
     OrderBook(OrderBookData),
+    /// A candlestick (OHLCV) bar — closed or in-progress.
+    ///
+    /// Emitted by Binance kline, Bybit kline, Kraken OHLC, and Crypto.com
+    /// candlestick streams. KuCoin doesn't currently push candle frames
+    /// over WS (its WS contractMarket feed is trade-driven; klines are
+    /// REST-only via [`crate::KuCoinClient::fetch_klines`]).
+    Candle(CandleData),
+    /// A funding-rate event from a perpetual futures feed.
+    ///
+    /// Emitted by Binance markPrice (`<symbol>@markPrice@1s`), Bybit
+    /// extended ticker, and other feeds that surface funding alongside
+    /// mark/index price. KuCoin's equivalent is already covered by
+    /// [`DataMessage::InstrumentEvent`] (subject `"funding.rate"`).
+    FundingRate(FundingData),
     // Private-feed events — requires a private WS token.
     /// A fill or status change on one of your orders.
     OrderUpdate(OrderUpdate),
@@ -317,4 +397,115 @@ pub struct AdvancedOrderUpdate {
     pub exchange_ts: i64,
     /// Local receipt timestamp in milliseconds.
     pub receipt_ts: i64,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Round-trip a CandleData through JSON to catch any field-name drift.
+    #[test]
+    fn candle_data_serde_round_trip() {
+        let c = CandleData {
+            symbol: "BTCUSDT".into(),
+            exchange: "binance".into(),
+            interval: "1m".into(),
+            open_ts: 1_700_000_000_000,
+            open: 96_000.0,
+            high: 96_500.0,
+            low: 95_800.0,
+            close: 96_300.0,
+            volume: 12.5,
+            is_closed: true,
+            receipt_ts: 1_700_000_060_001,
+        };
+        let json = serde_json::to_string(&c).expect("serialise");
+        let back: CandleData = serde_json::from_str(&json).expect("deserialise");
+        // Spot-check key fields — full equality requires PartialEq we don't derive.
+        assert_eq!(back.symbol, c.symbol);
+        assert_eq!(back.interval, c.interval);
+        assert_eq!(back.open_ts, c.open_ts);
+        assert!((back.close - c.close).abs() < 1e-9);
+        assert_eq!(back.is_closed, c.is_closed);
+    }
+
+    /// FundingData with optional mark/index fields populated.
+    #[test]
+    fn funding_data_serde_round_trip_with_optionals() {
+        let f = FundingData {
+            symbol: "BTCUSDT".into(),
+            exchange: "binance".into(),
+            funding_rate: 0.000_1,
+            next_funding_time: 1_700_028_800_000,
+            mark_price: Some(96_010.5),
+            index_price: Some(96_005.0),
+            exchange_ts: 1_700_000_000_000,
+            receipt_ts: 1_700_000_000_010,
+        };
+        let json = serde_json::to_string(&f).expect("serialise");
+        let back: FundingData = serde_json::from_str(&json).expect("deserialise");
+        assert_eq!(back.symbol, f.symbol);
+        assert!((back.funding_rate - f.funding_rate).abs() < 1e-12);
+        assert_eq!(back.next_funding_time, f.next_funding_time);
+        assert_eq!(back.mark_price, f.mark_price);
+        assert_eq!(back.index_price, f.index_price);
+    }
+
+    /// FundingData with optionals absent (e.g. Bybit's bare funding tick).
+    #[test]
+    fn funding_data_serde_round_trip_without_optionals() {
+        let f = FundingData {
+            symbol: "BTCUSDT".into(),
+            exchange: "bybit".into(),
+            funding_rate: -0.000_05,
+            next_funding_time: 1_700_028_800_000,
+            mark_price: None,
+            index_price: None,
+            exchange_ts: 1_700_000_000_000,
+            receipt_ts: 1_700_000_000_010,
+        };
+        let json = serde_json::to_string(&f).expect("serialise");
+        let back: FundingData = serde_json::from_str(&json).expect("deserialise");
+        assert!(back.mark_price.is_none());
+        assert!(back.index_price.is_none());
+        assert!((back.funding_rate - f.funding_rate).abs() < 1e-12);
+    }
+
+    /// Constructing the new variants and routing through a match — compile-
+    /// time smoke test for downstream consumers.
+    #[test]
+    fn data_message_new_variants_match() {
+        let candle = DataMessage::Candle(CandleData {
+            symbol: "BTCUSDT".into(),
+            exchange: "binance".into(),
+            interval: "1m".into(),
+            open_ts: 0,
+            open: 0.0,
+            high: 0.0,
+            low: 0.0,
+            close: 0.0,
+            volume: 0.0,
+            is_closed: false,
+            receipt_ts: 0,
+        });
+        let funding = DataMessage::FundingRate(FundingData {
+            symbol: "BTCUSDT".into(),
+            exchange: "binance".into(),
+            funding_rate: 0.0,
+            next_funding_time: 0,
+            mark_price: None,
+            index_price: None,
+            exchange_ts: 0,
+            receipt_ts: 0,
+        });
+
+        for msg in [candle, funding] {
+            match msg {
+                DataMessage::Candle(c) => assert_eq!(c.exchange, "binance"),
+                DataMessage::FundingRate(f) => assert_eq!(f.exchange, "binance"),
+                // #[non_exhaustive] forces a catch-all even though we covered both.
+                _ => unreachable!("unexpected variant"),
+            }
+        }
+    }
 }
