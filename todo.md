@@ -309,27 +309,46 @@ Tests:
 - 10 wiremock integration tests in `tests/binance_rest_mock.rs` —
   one per endpoint, end-to-end via a local mock HTTP server.
 
-### 3b. WebSocket (`src/binance/ws.rs`)
+### 3b. WebSocket (`src/binance/ws.rs`) ✓ DONE
 
 Implements `ExchangeConnector`. Binance WS uses URL-encoded stream names
-rather than subscription messages after connect.
+rather than subscription messages after connect — `subscription_message`
+returns `None` and the full WSS URL is built at connector construction.
 
-Base URLs:
-- Spot: `wss://stream.binance.com:9443/ws/<streamName>`
-- Spot combined: `wss://stream.binance.com:9443/stream?streams=<a>/<b>`
-- Futures: `wss://fstream.binance.com/ws/<streamName>`
+Constructors (`BinanceConnector::spot(&[&str])`, `::futures(&[&str])`)
+always use the combined-stream endpoint (`/stream?streams=…`) so a
+single connection multiplexes many topics; `parse_message` unwraps the
+`{"stream":…,"data":…}` envelope.
 
-| Subscription helper | Stream name | DataMessage variant |
-|---------------------|-------------|---------------------|
-| `trade_subscription(symbol)` | `<symbol>@aggTrade` | `Trade` |
-| `ticker_subscription(symbol)` | `<symbol>@bookTicker` | `Ticker` |
-| `kline_subscription(symbol, interval)` | `<symbol>@kline_<interval>` | `Candle` |
-| `depth_subscription(symbol)` | `<symbol>@depth@100ms` | `OrderBook` (delta) |
-| `depth_snapshot_subscription(symbol, levels)` | `<symbol>@depth{5\|10\|20}@100ms` | `OrderBook` (snapshot) |
-| `mark_price_subscription(symbol)` (futures) | `<symbol>@markPrice@1s` | `FundingRate` |
+| Helper (static fn → String) | Stream | DataMessage |
+|---------------------|--------|-------------|
+| `trade_stream(symbol)` | `<sym>@aggTrade` | `Trade` |
+| `ticker_stream(symbol)` | `<sym>@bookTicker` | `Ticker` (best_bid/ask; no last price) |
+| `kline_stream(symbol, interval)` | `<sym>@kline_<interval>` | `Candle` (is_closed flag) |
+| `depth_stream(symbol)` | `<sym>@depth@100ms` | `OrderBook` (delta) |
+| `depth_snapshot_stream(symbol, levels)` | `<sym>@depth{5\|10\|20}@100ms` | `OrderBook` (snapshot) |
+| `mark_price_stream(symbol)` (futures) | `<sym>@markPrice@1s` | `FundingRate` (mark + index) |
 
-Ping: Binance sends a ping frame — runner responds with pong. No
-application-level ping needed.
+Symbol case-handling: helpers lowercase symbols automatically per
+Binance's URL convention. The trade `m` field maps `m=true` →
+TradeSide::Sell (buyer is maker = aggressive sell).
+
+The partial-depth snapshot (no `e` field, no symbol in the frame)
+gets its symbol from the combined-stream wrapper's `stream` key.
+
+Ping: Binance sends protocol-level WS Ping frames every ~3 min; the
+runner responds with Pong automatically. No application-level JSON ping
+required — `ping_interval_secs` is 180 in the default config (unused
+in practice but kept above the idle-timeout threshold).
+
+Tests:
+- 11 unit tests in `src/binance/ws.rs::tests` — one per variant +
+  helper string format + URL construction + unknown-event handling.
+- 1 integration test in `tests/binance_ws_mock.rs` that spins up a
+  local tokio-tungstenite server, pushes one frame of each Binance
+  type (Trade, Ticker, Candle, depth delta, depth snapshot, Funding),
+  and asserts the runner + connector deliver all six variants
+  through `run_feed`.
 
 ---
 
