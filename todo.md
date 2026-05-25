@@ -116,10 +116,17 @@ outer wrapper, gated behind WsDisconnected.
     - runner_emits_session_ended_and_exhausted_events
     - supervised_emits_token_refresh_and_exhausted_events
 
-⚠  Still open (disconnection hardening — from log analysis)
-• Fix 3 — tighter bare-runner defaults? (debatable now that Fix 1
-  exists). Default WsRunnerConfig still has max_reconnect_attempts = 10
-  for backwards compatibility; SupervisedConfig overrides to 3.
+• Fix 3 — tighter bare-runner defaults (src/ws/runner.rs).
+  WsRunnerConfig::default() updated from 10 × 80 s ≈ 9 min worst-case
+  to 5 × 30 s ≈ 95 s worst-case. The old defaults were tuned for
+  transient blips alone; cascades benefit from a faster bail so the
+  caller's outer wrapper (typically run_feed_supervised) can refresh
+  the token sooner. Breaking-ish behavior change for direct run_feed
+  callers — they now surface WsDisconnected after ~1.5 min instead of
+  ~9 min. Version bumped to 0.2.0 to signal the default change.
+  SupervisedConfig::from_runner still overrides to 3 (now from 5,
+  previously from 10) so supervised users get the even-tighter
+  per-cycle ceiling.
 
 ⚠  Still open (architecture)
 • Multi-exchange support — only KuCoin is implemented; the

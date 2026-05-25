@@ -147,13 +147,18 @@ pub struct WsRunnerConfig {
     pub reconnect_delay_secs: u64,
     /// Hard ceiling on the per-attempt reconnect delay (seconds).
     ///
-    /// Defaults to 80 s (16× the 5 s base). Lower this for latency-sensitive
-    /// contexts — e.g. set to 30 s for a futures trading bot so a prolonged
-    /// outage re-tries every 30 s rather than every 80 s once the backoff
-    /// saturates.
+    /// Defaults to 30 s (6× the 5 s base). The 5 → 10 → 20 → 30 → 30 …
+    /// schedule keeps the longest tail at 30 s, which is short enough that
+    /// a typical reconnect window (5 attempts) finishes in ≈ 95 s rather
+    /// than the older 9 min. Raise for non-latency-sensitive contexts.
     pub max_reconnect_delay_secs: u64,
     /// Give up and return [`ExchangeError::WsDisconnected`] after this many
     /// consecutive failed reconnect attempts. Set to `u32::MAX` to retry forever.
+    ///
+    /// Defaults to 5 (down from the previous 10) so a transient blip still
+    /// has room to recover but a true cascade surfaces `WsDisconnected` in
+    /// roughly 95 s — fast enough for the caller's outer wrapper (typically
+    /// [`run_feed_supervised`]) to re-negotiate a token.
     pub max_reconnect_attempts: u32,
     /// Maximum time to wait for the WebSocket handshake to complete (seconds).
     ///
@@ -185,8 +190,11 @@ impl Default for WsRunnerConfig {
         Self {
             ping_interval_secs: 20,
             reconnect_delay_secs: 5,
-            max_reconnect_delay_secs: 80,
-            max_reconnect_attempts: 10,
+            // 5 attempts × 30 s ceiling ≈ 95 s worst-case before surfacing
+            // WsDisconnected. The old 10 × 80 s ≈ 9 min was tuned for
+            // transient blips; cascades benefit from a faster bail.
+            max_reconnect_delay_secs: 30,
+            max_reconnect_attempts: 5,
             connect_timeout_secs: 10,
             idle_timeout_secs: 60,
             on_event: None,
@@ -703,8 +711,9 @@ impl SupervisedConfig {
     /// Build a supervised config from an existing [`WsRunnerConfig`].
     ///
     /// Preserves all runner fields, then overrides `max_reconnect_attempts`
-    /// to 3 if it is still at the bare-runner default of 10 — supervised
-    /// callers almost always want the lower per-cycle ceiling.
+    /// to 3 if the caller left it at the bare-runner default — supervised
+    /// callers almost always want the tighter per-cycle ceiling so a
+    /// cascade triggers a token refresh quickly.
     pub fn from_runner(mut runner: WsRunnerConfig) -> Self {
         if runner.max_reconnect_attempts == WsRunnerConfig::default().max_reconnect_attempts {
             runner.max_reconnect_attempts = 3;
