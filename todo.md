@@ -226,19 +226,35 @@ Tests in `src/actors.rs::tests`:
 
 ## 2. KuCoin — remaining work
 
-### 2a. Unified Trade Account (UTA) REST endpoints
+### 2a. Unified Trade Account (UTA) REST endpoints ✓ DONE
 
 KuCoin Unified combines Spot + Futures margin in one account.
-Base URL: `https://api.kucoin.com` (same as Spot).
+Base URL: `https://api.kucoin.com` (same as Spot — routed via the
+existing `KucoinEnv::Unified` variant).
 
-| Method | Endpoint |
-|--------|----------|
-| `get_unified_account()` | `GET /api/v3/account/summary` |
-| `get_unified_margin()` | `GET /api/v3/margin/accounts` |
-| `get_cross_margin_symbols()` | `GET /api/v1/isolated/accounts` |
+Implemented in `src/rest/uta.rs` as new methods on `KuCoinClient`:
 
-Add `KucoinEnv::Unified` routing (already in `KucoinEnv` enum, just needs
-REST methods in `src/rest/account.rs` and test coverage in `rest_mock.rs`).
+| Method | Endpoint | Returns |
+|--------|----------|---------|
+| `get_uta_account_summary()` | `GET /api/v3/account/summary` | `UtaAccountSummary` |
+| `get_cross_margin_accounts()` | `GET /api/v3/margin/accounts` | `CrossMarginAccount` (incl. per-currency `assets`) |
+| `get_isolated_margin_accounts()` | `GET /api/v1/isolated/accounts` | `IsolatedMarginAccount` (incl. per-pair base/quote) |
+
+Wire-format notes captured:
+- `unrealisedPNLTotal` uses uppercase "PNL" — explicit `#[serde(rename)]`
+  override (default camelCase would produce `unrealisedPnlTotal`).
+- `maxBorrowSize` is omitted on some account states — typed as
+  `Option<f64>` so the bare-borrow case round-trips cleanly.
+- Boolean enable-flags (`borrowEnabled`, `transferInEnabled`, …) use
+  `#[serde(default)]` so KuCoin's permissive empty-state responses
+  parse without error.
+
+Tests:
+- 4 unit tests in `src/rest/uta.rs::tests` covering serde shapes,
+  optional `max_borrow_size`, and the nested isolated-pair structure.
+- 4 wiremock integration tests in `tests/rest_mock.rs` — one per
+  endpoint plus a `411100 "UTA not enabled"` Api-error propagation
+  test.
 
 ### 2b. Spot margin orders
 
