@@ -243,6 +243,21 @@ pub trait ExchangeConnector: Send + Sync {
     /// Return `Ok(vec![])` for control frames or topics the connector does
     /// not handle. Only return `Err` for unrecoverable parse failures.
     fn parse_message(&self, raw: &str) -> Result<Vec<DataMessage>>;
+
+    /// Application-level ping JSON to send at every `ping_interval_secs` tick.
+    ///
+    /// Different exchanges expect different formats:
+    /// - KuCoin: `{"type":"ping"}`
+    /// - Bybit: `{"op":"ping"}`
+    /// - Binance: server-driven — return `None` so the runner uses only
+    ///   protocol-level WS Ping/Pong frames.
+    ///
+    /// Default implementation returns `None`, matching the
+    /// no-application-ping case. Connectors whose servers expect an
+    /// application ping override and return their format.
+    fn ping_message(&self) -> Option<String> {
+        None
+    }
 }
 
 /// A fill or status-change event for an order on the private feed.

@@ -266,6 +266,13 @@ impl ExchangeConnector for KucoinConnector {
         self.trade_subscription(symbol)
     }
 
+    /// KuCoin expects `{"type":"ping"}` every `ping_interval_secs` and
+    /// answers each one with `{"type":"pong"}`. Override the default
+    /// (which returns `None`) so the runner sends app pings on this feed.
+    fn ping_message(&self) -> Option<String> {
+        Some(WsMessage::ping_json().to_string())
+    }
+
     fn parse_message(&self, raw: &str) -> Result<Vec<DataMessage>> {
         let msg: WsMessage = serde_json::from_str(raw)?;
 

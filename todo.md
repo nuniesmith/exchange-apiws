@@ -395,32 +395,45 @@ Tests:
 - 9 wiremock integration tests in `tests/bybit_rest_mock.rs` — one per
   endpoint plus an error-envelope propagation test.
 
-### 4b. WebSocket (`src/bybit/ws.rs`)
+### 4b. WebSocket (`src/bybit/ws.rs`) ✓ DONE
 
-Implements `ExchangeConnector`.
+Implements `ExchangeConnector`. Bybit's WS is subscribe-after-connect:
+`BybitConnector::new(category, topics)` packages topics into a single
+`{"op":"subscribe","args":[…]}` frame returned by `subscription_message`
+and sent immediately after handshake. `ping_message` returns the
+Bybit-specific `{"op":"ping"}` (server replies `{"op":"pong"}`).
 
-Base URLs:
-- Spot public: `wss://stream.bybit.com/v5/public/spot`
-- Linear public: `wss://stream.bybit.com/v5/public/linear`
-- Inverse public: `wss://stream.bybit.com/v5/public/inverse`
+URL per category:
+- Spot:    `wss://stream.bybit.com/v5/public/spot`
+- Linear:  `wss://stream.bybit.com/v5/public/linear`
+- Inverse: `wss://stream.bybit.com/v5/public/inverse`
 
-Subscription message format (sent after connect):
-```json
-{"op":"subscribe","args":["orderbook.50.BTCUSDT"]}
-```
+| Helper (static fn → String) | Topic | DataMessage |
+|-----------------------------|-------|-------------|
+| `trade_topic(symbol)` | `publicTrade.<sym>` | `Trade` (one per array element — Bybit batches) |
+| `ticker_topic(symbol)` | `tickers.<sym>` | `Ticker` (snapshot/delta type flag) |
+| `kline_topic(symbol, interval)` | `kline.<interval>.<sym>` | `Candle` (`confirm` = closed) |
+| `orderbook_topic(symbol, depth)` | `orderbook.<depth>.<sym>` | `OrderBook` (snapshot then deltas) |
 
-Ping: send `{"op":"ping"}` every 20 s; server responds `{"op":"pong"}`.
+Trait extension supporting this PR:
+- `ExchangeConnector::ping_message(&self) -> Option<String>` added with
+  default returning `None` (matches Binance — no app ping, protocol Ping
+  only). Each connector that needs an app ping overrides:
+    - KucoinConnector → `{"type":"ping"}`
+    - BybitConnector → `{"op":"ping"}`
+    - BinanceConnector inherits the `None` default.
+- The runner now calls `connector.ping_message()` instead of the
+  hard-coded KuCoin format. Idle check still fires regardless; if
+  `ping_message` returns `None` the tick simply doesn't send anything.
 
-| Subscription helper | Topic arg | DataMessage |
-|---------------------|-----------|-------------|
-| `trade_subscription(symbol)` | `publicTrade.<symbol>` | `Trade` |
-| `ticker_subscription(symbol)` | `tickers.<symbol>` | `Ticker` |
-| `kline_subscription(symbol, interval)` | `kline.<interval>.<symbol>` | `Candle` |
-| `orderbook_subscription(symbol, depth)` | `orderbook.<depth>.<symbol>` | `OrderBook` |
-
-Note: first `orderbook.*` message is a snapshot (`type:"snapshot"`),
-subsequent messages are deltas (`type:"delta"`). Set `is_snapshot`
-accordingly in `parse_message`.
+Tests:
+- 12 unit tests in `src/bybit/ws.rs::tests` covering subscribe-frame
+  shape, empty-topics behaviour, ping format, op-ack and pong
+  passthrough, all four parser paths (trade-batch, ticker, kline,
+  orderbook snapshot+delta), and per-category URL routing.
+- 1 integration test in `tests/bybit_ws_mock.rs` that spins up a local
+  WS server, captures the subscribe frame + ping JSON, and asserts
+  Trade/Ticker/Candle/OrderBook all flow through `run_feed`.
 
 ---
 
