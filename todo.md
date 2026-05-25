@@ -274,26 +274,40 @@ Scope:
 
 No API keys. All endpoints below are unauthenticated.
 
-### 3a. REST (`src/binance/rest.rs`)
+### 3a. REST (`src/binance/rest.rs`) ✓ DONE
 
 Uses `PublicRestClient` pointed at:
 - Spot: `https://api.binance.com`
 - Futures (USDT-M): `https://fapi.binance.com`
 
-| Method | Endpoint |
-|--------|----------|
-| `get_klines(symbol, interval, limit)` | `GET /api/v3/klines` |
-| `get_orderbook(symbol, limit)` | `GET /api/v3/depth` |
-| `get_recent_trades(symbol, limit)` | `GET /api/v3/trades` |
-| `get_ticker(symbol)` | `GET /api/v3/ticker/bookTicker` |
-| `get_ticker_24h(symbol)` | `GET /api/v3/ticker/24hr` |
-| `get_exchange_info()` | `GET /api/v3/exchangeInfo` |
-| `get_futures_klines(symbol, interval, limit)` | `GET /fapi/v1/klines` |
-| `get_futures_funding_rate(symbol)` | `GET /fapi/v1/fundingRate` |
-| `get_futures_mark_price(symbol)` | `GET /fapi/v1/premiumIndex` |
-| `get_futures_open_interest(symbol)` | `GET /fapi/v1/openInterest` |
+| Method | Endpoint | Returns |
+|--------|----------|---------|
+| `get_klines(symbol, interval, limit)` | `GET /api/v3/klines` | `Vec<BinanceKline>` |
+| `get_orderbook(symbol, limit)` | `GET /api/v3/depth` | `BinanceOrderBook` |
+| `get_recent_trades(symbol, limit)` | `GET /api/v3/trades` | `Vec<BinanceTrade>` |
+| `get_ticker(symbol)` | `GET /api/v3/ticker/bookTicker` | `BinanceBookTicker` |
+| `get_ticker_24h(symbol)` | `GET /api/v3/ticker/24hr` | `BinanceTicker24h` |
+| `get_exchange_info()` | `GET /api/v3/exchangeInfo` | `serde_json::Value` (filter shape varies by symbol) |
+| `get_futures_klines(symbol, interval, limit)` | `GET /fapi/v1/klines` | `Vec<BinanceKline>` |
+| `get_futures_funding_rate(symbol, limit)` | `GET /fapi/v1/fundingRate` | `Vec<BinanceFundingRate>` |
+| `get_futures_mark_price(symbol)` | `GET /fapi/v1/premiumIndex` | `BinanceMarkPrice` |
+| `get_futures_open_interest(symbol)` | `GET /fapi/v1/openInterest` | `BinanceOpenInterest` |
 
-Response: bare JSON arrays/objects (no envelope wrapper).
+Response: bare JSON arrays/objects (no envelope wrapper). The
+`BinanceKline` shape needs a custom Deserialize (Binance returns a
+12-element heterogeneous array) — implementation in src/binance/rest.rs.
+
+`BinanceKline::into_candle_data(symbol, interval)` and
+`BinanceFundingRate::into_funding_data()` bridge raw Binance responses
+to the unified `CandleData` / `FundingData` types from §1c — same
+downstream code path as any other exchange.
+
+Tests:
+- 5 unit tests in `src/binance/rest.rs::tests` covering the kline
+  array Deserialize, into_candle_data, orderbook level parsing, book
+  ticker shape, and funding-rate → FundingData bridge.
+- 10 wiremock integration tests in `tests/binance_rest_mock.rs` —
+  one per endpoint, end-to-end via a local mock HTTP server.
 
 ### 3b. WebSocket (`src/binance/ws.rs`)
 

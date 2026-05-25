@@ -71,6 +71,7 @@
 
 pub mod actors;
 pub mod auth;
+pub mod binance;
 pub mod client;
 pub mod connectors;
 pub mod error;
@@ -81,6 +82,7 @@ pub mod ws;
 
 // ── Primary re-exports ────────────────────────────────────────────────────────
 
+pub use binance::BinanceRestClient;
 pub use client::{Credentials, KuCoinClient};
 pub use connectors::{ExchangeConfig, KuCoin, KucoinEnv};
 pub use error::{ExchangeError, Result};
