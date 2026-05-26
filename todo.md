@@ -605,31 +605,42 @@ Tests:
   — one per endpoint plus an error-envelope propagation test;
   asserts on `API-Key` / `API-Sign` headers + `nonce=` in body.
 
-### 5c. WebSocket (`src/kraken/ws.rs`)
+### 5c. WebSocket (`src/kraken/ws.rs`) ✓ DONE (public channels)
 
-Implements `ExchangeConnector`.
+Implements `ExchangeConnector`. Kraken v2 is subscribe-after-connect
+with one subscribe frame per channel (not bundled like Bybit's `args`
+array); `subscription_message` returns `None` and the caller passes
+the list of frames to `run_feed` as the `subscriptions` vector.
 
-Base URL: `wss://ws.kraken.com/v2`
-Private: `wss://ws-auth.kraken.com/v2`
+`ping_message` returns the Kraken-specific `{"method":"ping"}` —
+trait extension landed in PR #11 makes this a clean override.
 
-Ping: send `{"method":"ping"}` every 30 s.
+URLs:
+- Public: `wss://ws.kraken.com/v2` ← [`KrakenConnector::public`]
+- Private: `wss://ws-auth.kraken.com/v2` ← [`KrakenConnector::private`]
 
-Subscribe message format:
-```json
-{"method":"subscribe","params":{"channel":"ticker","symbol":["BTC/USD"]}}
-```
+| Helper (static fn → String) | Channel | DataMessage |
+|-----------------------------|---------|-------------|
+| `trade_subscription(&[pairs])` | `trade` | `Trade` (one per element of `data` array) |
+| `ticker_subscription(&[pairs])` | `ticker` | `Ticker` (snapshot/update both routed) |
+| `ohlc_subscription(&[pairs], interval_mins)` | `ohlc` | `Candle` (always `is_closed = false` — Kraken v2 has no "closed" flag) |
+| `book_subscription(&[pairs], depth)` | `book` | `OrderBook` (snapshot then deltas) |
 
-| Subscription helper | Channel | DataMessage |
-|---------------------|---------|-------------|
-| `trade_subscription(pair)` | `trade` | `Trade` |
-| `ticker_subscription(pair)` | `ticker` | `Ticker` |
-| `ohlc_subscription(pair, interval)` | `ohlc` | `Candle` |
-| `orderbook_subscription(pair, depth)` | `book` | `OrderBook` |
-| `order_updates_subscription()` ⚑ | `executions` | `OrderUpdate` |
-| `balance_subscription()` ⚑ | `balances` | `BalanceUpdate` |
+Private channels (`executions`, `balances`) require a token from
+`POST /0/private/GetWebSocketsToken`. Not wired up with typed helpers
+in this PR — callers can subscribe via custom JSON over a
+`KrakenConnector::private()` connection. The parser ignores unknown
+channels rather than erroring so private subscriptions don't trip it.
 
-⚑ Private channel — requires a WS auth token from
-`POST /0/private/GetWebSocketsToken`.
+Tests:
+- 11 unit tests in `src/kraken/ws.rs::tests` covering URL routing,
+  ping format, subscribe-frame shape, all four parsers, snapshot+delta
+  for book, and the heartbeat / pong / subscribe-ack / unknown-channel
+  passthrough paths.
+- 1 integration test in `tests/kraken_ws_mock.rs` spinning up a local
+  tokio-tungstenite server: pushes one frame of each channel,
+  captures the runner's subscribe frames + ping JSON, asserts all
+  four DataMessage variants flow through `run_feed`.
 
 ---
 

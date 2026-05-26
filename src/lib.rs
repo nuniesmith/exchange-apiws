@@ -86,7 +86,7 @@ pub mod ws;
 
 pub use binance::{BinanceConnector, BinanceRestClient};
 pub use bybit::{BybitCategory, BybitConnector, BybitRestClient};
-pub use kraken::{KrakenCredentials, KrakenPrivateClient, KrakenRestClient};
+pub use kraken::{KrakenConnector, KrakenCredentials, KrakenPrivateClient, KrakenRestClient};
 pub use client::{Credentials, KuCoinClient};
 pub use connectors::{ExchangeConfig, KuCoin, KucoinEnv};
 pub use error::{ExchangeError, Result};
