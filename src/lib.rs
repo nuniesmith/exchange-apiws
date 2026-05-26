@@ -75,6 +75,7 @@ pub mod binance;
 pub mod bybit;
 pub mod client;
 pub mod connectors;
+pub mod cryptocom;
 pub mod error;
 pub mod http;
 pub mod kraken;
@@ -86,6 +87,7 @@ pub mod ws;
 
 pub use binance::{BinanceConnector, BinanceRestClient};
 pub use bybit::{BybitCategory, BybitConnector, BybitRestClient};
+pub use cryptocom::CryptocomRestClient;
 pub use kraken::{KrakenConnector, KrakenCredentials, KrakenPrivateClient, KrakenRestClient};
 pub use client::{Credentials, KuCoinClient};
 pub use connectors::{ExchangeConfig, KuCoin, KucoinEnv};

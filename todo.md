@@ -651,21 +651,51 @@ string. Sent as `sig` field in the request body (not a header).
 
 Add `src/cryptocom/auth.rs`.
 
-### 6a. Public REST (`src/cryptocom/rest.rs`)
+### 6a. Public REST (`src/cryptocom/rest.rs`) ✓ DONE
 
-Base URL: `https://api.crypto.com/exchange/v1`.
+Base URL: `https://api.crypto.com/exchange/v1`. Uses
+`PublicRestClient`; envelope `{"code": N, "result": {...}}` is
+unwrapped by a free function `unwrap_cryptocom_envelope<T>` (public
+for external use). Non-zero `code` → `ExchangeError::Api`. This is
+the fourth envelope variant in the codebase after KuCoin / Bybit /
+Kraken.
 
-| Method | Endpoint |
-|--------|----------|
-| `get_instruments()` | `GET /public/get-instruments` |
-| `get_orderbook(instrument, depth)` | `GET /public/get-book` |
-| `get_candlestick(instrument, timeframe)` | `GET /public/get-candlestick` |
-| `get_ticker(instrument)` | `GET /public/get-ticker` |
-| `get_recent_trades(instrument)` | `GET /public/get-trades` |
-| `get_funding_rate(instrument)` | `GET /public/get-valuations` |
+| Method | Endpoint | Returns |
+|--------|----------|---------|
+| `get_instruments()` | `/public/get-instruments` | `Vec<CryptocomInstrument>` |
+| `get_orderbook(instrument, depth)` | `/public/get-book` | `CryptocomOrderBook` |
+| `get_candlestick(instrument, timeframe)` | `/public/get-candlestick` | `Vec<CryptocomCandle>` |
+| `get_ticker(Option<instrument>)` | `/public/get-ticker` | `Vec<CryptocomTicker>` |
+| `get_recent_trades(instrument)` | `/public/get-trades` | `Vec<CryptocomTrade>` |
+| `get_valuations(instrument, valuation_type)` | `/public/get-valuations` | `Vec<CryptocomValuation>` |
 
-Envelope: `{"code":0,"result":{…}}` — non-zero `code` →
-`ExchangeError::Api`.
+Wire-format quirks captured:
+- Crypto.com uses single-letter field names (`i`, `b`, `k`, `vv`, `a`,
+  `h`, `l`, `c`, `v`, `t`, `o`, `s`, `p`, `q`, `d`) — `#[serde(rename)]`
+  on every struct field maps them to readable names. Best ask is `"k"`
+  on the ticker (unintuitively).
+- Most endpoints wrap their data in `result.data: Vec<T>`; an internal
+  `DataList<T>` newtype handles the unwrap uniformly.
+- Orderbook levels include a num-orders column — `bids_f64()` /
+  `asks_f64()` drop it for cross-exchange-friendly output.
+- `get_orderbook` returns `result.data[0]` as a single book (rather
+  than `Vec<CryptocomOrderBook>`); an empty array surfaces as
+  `Api(code="empty_data")`.
+- `get_valuations` covers what the roadmap called `get_funding_rate`;
+  the real endpoint serves multiple value types via the
+  `valuation_type` query param (`"mark_price"`, `"index_price"`,
+  `"funding_rate"`, `"estimated_funding_rate"`).
+- Numeric fields stay `String` to preserve wire precision; `*_f64()`
+  helpers convert on demand.
+
+Tests:
+- 8 unit tests in `src/cryptocom/rest.rs::tests` — envelope unwrap
+  (success + Api error with `message`), orderbook helper, candle
+  letter renaming + parse helpers, ticker letter renaming, trade and
+  valuation deserialise, instrument with missing optionals.
+- 9 wiremock integration tests in `tests/cryptocom_rest_mock.rs` —
+  one per endpoint (including filtered and unfiltered ticker) plus
+  Api-error propagation and the empty-book edge case.
 
 ### 6b. Private REST (authenticated)
 
