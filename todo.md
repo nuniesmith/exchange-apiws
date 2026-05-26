@@ -552,20 +552,58 @@ Tests:
   one per endpoint (including both filtered and unfiltered
   AssetPairs) plus an error-envelope propagation test.
 
-### 5b. Private REST (authenticated)
+### 5b. Private REST (authenticated) ✓ DONE
 
-| Method | Endpoint |
-|--------|----------|
-| `get_balance()` | `POST /0/private/Balance` |
-| `get_open_orders()` | `POST /0/private/OpenOrders` |
-| `get_closed_orders()` | `POST /0/private/ClosedOrders` |
-| `place_order(pair, side, order_type, volume, price)` | `POST /0/private/AddOrder` |
-| `cancel_order(txid)` | `POST /0/private/CancelOrder` |
-| `cancel_all_orders()` | `POST /0/private/CancelAll` |
-| `get_trades_history()` | `POST /0/private/TradesHistory` |
-| `get_ledger(asset)` | `POST /0/private/Ledgers` |
-| `withdraw(asset, key, amount)` | `POST /0/private/Withdraw` |
-| `get_withdrawal_status(asset)` | `POST /0/private/WithdrawStatus` |
+New `src/kraken/auth.rs` introduces Kraken's HMAC-SHA512 signing
+(distinct from the KuCoin HMAC-SHA256 in `src/auth.rs`). New
+`src/kraken/private.rs` exposes `KrakenPrivateClient` with the 10
+documented endpoints:
+
+| Method | Endpoint | Returns |
+|--------|----------|---------|
+| `get_balance()` | `POST /0/private/Balance` | `HashMap<String, String>` |
+| `get_open_orders()` | `POST /0/private/OpenOrders` | `KrakenOpenOrders` |
+| `get_closed_orders()` | `POST /0/private/ClosedOrders` | `KrakenClosedOrders` (with `count`) |
+| `place_order(pair, side, type, volume, price?)` | `POST /0/private/AddOrder` | `KrakenAddOrderResponse` |
+| `cancel_order(txid)` | `POST /0/private/CancelOrder` | `KrakenCancelResponse` |
+| `cancel_all_orders()` | `POST /0/private/CancelAll` | `KrakenCancelResponse` |
+| `get_trades_history()` | `POST /0/private/TradesHistory` | `serde_json::Value` |
+| `get_ledger(asset)` | `POST /0/private/Ledgers` | `serde_json::Value` |
+| `withdraw(asset, key, amount)` | `POST /0/private/Withdraw` | `KrakenWithdrawResponse` |
+| `get_withdrawal_status(asset)` | `POST /0/private/WithdrawStatus` | `serde_json::Value` |
+
+Auth implementation notes:
+- `KrakenCredentials { api_key, api_secret_b64 }` is `ZeroizeOnDrop`,
+  loadable from `KRAKEN_API_KEY` / `KRAKEN_API_SECRET` env vars.
+- `sign_kraken_request(uri_path, nonce, post_body, secret_b64)` does:
+  `base64(HMAC_SHA512(decoded_secret, uri_path || SHA256(nonce_str || post_body)))`.
+  Public so callers building bespoke requests can reuse it.
+- `form_encode(&[(&str, &str)])` builds the
+  `application/x-www-form-urlencoded` body (space → `+`, reserved
+  chars → `%XX`); the body MUST match byte-for-byte what gets signed.
+- Strictly monotonic nonces — initialised from millisecond wall
+  clock; an `AtomicU64` floor (raised via `fetch_max` then incremented
+  via `fetch_add`) guarantees uniqueness across concurrent calls and
+  survives clock rewinds.
+
+The 10 endpoints return typed structs where shape is predictable
+(`KrakenOrder` and friends) and `serde_json::Value` for richer
+multi-field payloads (`TradesHistory`, `Ledgers`, `WithdrawStatus`)
+where callers usually want to pick specific fields. Typed responses
+preserve numeric fields as `String` (Kraken's wire format) so
+arbitrary precision is preserved.
+
+Tests:
+- 9 unit tests in `src/kraken/auth.rs::tests` — credentials round-trip,
+  invalid-base64 rejection, signing determinism, signing
+  sensitivity to every input (nonce/path/body/secret), output is
+  88-char base64, form-encoding edge cases (empty, spaces,
+  reserved chars).
+- 4 unit tests in `src/kraken/private.rs::tests` — nonce
+  monotonicity across 1000 calls, response-type serde shapes.
+- 11 wiremock integration tests in `tests/kraken_private_mock.rs`
+  — one per endpoint plus an error-envelope propagation test;
+  asserts on `API-Key` / `API-Sign` headers + `nonce=` in body.
 
 ### 5c. WebSocket (`src/kraken/ws.rs`)
 
