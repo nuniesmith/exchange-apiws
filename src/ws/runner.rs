@@ -518,6 +518,19 @@ async fn single_session(
                 }
                 match frame {
                     Some(Ok(Message::Text(text))) => {
+                        // Inbound-driven response (e.g. Crypto.com's
+                        // public/respond-heartbeat echoing the server's
+                        // heartbeat id). Defaults to None for connectors
+                        // that don't need it.
+                        if let Some(response) = connector.response_for(&text) {
+                            guard.check().await;
+                            if let Err(e) =
+                                write.send(Message::Text(response.into())).await
+                            {
+                                warn!(error = %e, "response_for send failed");
+                                return SessionOutcome::Disconnected;
+                            }
+                        }
                         match connector.parse_message(&text) {
                             Ok(msgs) => {
                                 for msg in msgs {
