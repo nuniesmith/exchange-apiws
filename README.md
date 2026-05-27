@@ -149,6 +149,20 @@ CRYPTOCOM_API_SECRET=...
 
 Public-only exchanges (Binance, Bybit) need no credentials.
 
+### Runnable examples
+
+The `examples/` directory has a runnable binary per exchange plus
+two cross-cutting demos. Run any one with `cargo run --example <name>`:
+
+| Example | What it does |
+|---|---|
+| `binance_public_market` | Spot klines + 24h ticker + futures mark price for BTCUSDT |
+| `bybit_public_market` | Linear-perp ticker + 5-level orderbook + recent funding history |
+| `kraken_public_market` | System status + XBT/USD ticker + recent 1m OHLC bars |
+| `cryptocom_public_market` | BTC_USDT ticker + 10-level orderbook + BTCUSD-PERP mark price |
+| `multi_exchange_aggregator` | Drives Binance + Bybit BTCUSDT trade feeds into one channel; demonstrates the unified `DataMessage` cross-exchange pattern |
+| `kucoin_supervised_feed` | **Recommended production pattern** — `run_feed_supervised` for token re-negotiation on cascade, with a `RunnerEvent` listener wired to a metrics counter and Ctrl-C shutdown |
+
 ---
 
 ## Quick Start
