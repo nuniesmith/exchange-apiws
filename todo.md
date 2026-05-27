@@ -757,32 +757,52 @@ Tests:
   to assert the signing implementation matches the documented
   contract bit-for-bit.
 
-### 6c. WebSocket (`src/cryptocom/ws.rs`)
+### 6c. WebSocket (`src/cryptocom/ws.rs`) ✓ DONE (public channels)
 
-Implements `ExchangeConnector`.
+Implements `ExchangeConnector`. **Roadmap complete** ✓
 
 Public: `wss://stream.crypto.com/exchange/v1/market`
-Private: `wss://stream.crypto.com/exchange/v1/user`
+Private: `wss://stream.crypto.com/exchange/v1/user` (callers compose
+their own auth + subscribe JSON; parser ignores unknown channels so
+private subs don't trip it).
 
-Ping: send `{"method":"public/heartbeat"}` every 30 s;
-server responds with heartbeat — respond with `{"method":"public/respond-heartbeat","id":<same_id>}`.
+The interesting wrinkle: Crypto.com's heartbeat is **server-initiated**
+— server pushes `{"id":<N>,"method":"public/heartbeat"}` and the
+client must reply with `{"id":<N>,"method":"public/respond-heartbeat"}`
+echoing the same `id`. The runner's existing tick-based `ping_message`
+model doesn't fit (it's stateless), so this PR extended the
+`ExchangeConnector` trait with an optional method:
 
-Subscribe message:
-```json
-{"id":1,"method":"subscribe","params":{"channels":["book.BTC_USDT.10"]}}
+```rust
+fn response_for(&self, _raw: &str) -> Option<String> { None }
 ```
 
-| Subscription helper | Channel pattern | DataMessage |
-|---------------------|-----------------|-------------|
-| `trade_subscription(instrument)` | `trade.<instrument>` | `Trade` |
-| `ticker_subscription(instrument)` | `ticker.<instrument>` | `Ticker` |
-| `kline_subscription(instrument, timeframe)` | `candlestick.<tf>.<instrument>` | `Candle` |
-| `orderbook_subscription(instrument, depth)` | `book.<instrument>.<depth>` | `OrderBook` |
-| `order_updates_subscription()` ⚑ | `user.order.<instrument>` | `OrderUpdate` |
-| `balance_subscription()` ⚑ | `user.balance` | `BalanceUpdate` |
+The runner now calls `response_for` on every inbound text frame
+before `parse_message` and sends the returned text (if any) back to
+the server. Default-impl is `None`, so every existing connector keeps
+working without changes. `CryptocomConnector` overrides to detect
+heartbeats and craft the matching response.
 
-⚑ Private — connect to the private WS URL with a signed auth frame
-sent immediately after connect.
+| Helper (static fn → String) | Channel | DataMessage |
+|-----------------------------|---------|-------------|
+| `trade_channel(instrument)` | `trade.<inst>` | `Trade` |
+| `ticker_channel(instrument)` | `ticker.<inst>` | `Ticker` |
+| `candlestick_channel(instrument, tf)` | `candlestick.<tf>.<inst>` | `Candle` (always `is_closed = false`) |
+| `book_channel(instrument, depth)` | `book.<inst>.<depth>` | `OrderBook` (snapshot then deltas) |
+| `subscribe_frame(id, &channels)` | builds `{"id":N,"method":"subscribe","params":{"channels":[…]}}` | — |
+
+Tests:
+- 14 unit tests in `src/cryptocom/ws.rs::tests` covering URL routing
+  (public/private), channel-name builders, subscribe-frame shape,
+  `ping_message` is `None` (server-initiated), `response_for`
+  heartbeat round-trip (id echo) and non-heartbeat None, all four
+  parsers + book snapshot/delta, plus passthrough for subscribe-ack
+  and unknown private channels.
+- 1 integration test in `tests/cryptocom_ws_mock.rs` spinning up a
+  local tokio-tungstenite server: pushes a heartbeat with a known
+  `id` then one frame of each channel, captures the subscribe frame
+  + heartbeat-response (asserts `id == 4242` matches), and verifies
+  all four `DataMessage` variants flow through `run_feed`.
 
 ---
 

@@ -12,6 +12,7 @@
 pub mod auth;
 pub mod private;
 pub mod rest;
+pub mod ws;
 
 pub use auth::{CryptocomCredentials, build_params_string, sign_cryptocom_request};
 pub use private::CryptocomPrivateClient;
@@ -19,3 +20,4 @@ pub use rest::{
     CryptocomCandle, CryptocomInstrument, CryptocomOrderBook, CryptocomRestClient, CryptocomTicker,
     CryptocomTrade, CryptocomValuation, unwrap_cryptocom_envelope,
 };
+pub use ws::CryptocomConnector;

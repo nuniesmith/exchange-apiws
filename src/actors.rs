@@ -258,6 +258,21 @@ pub trait ExchangeConnector: Send + Sync {
     fn ping_message(&self) -> Option<String> {
         None
     }
+
+    /// Optional inbound-driven response — given the raw text of an
+    /// incoming frame, return a JSON frame the runner should send back
+    /// before delivering parsed `DataMessage`s upstream.
+    ///
+    /// Useful for protocols where a heartbeat is server-initiated and
+    /// must be acknowledged with content derived from the inbound frame
+    /// (e.g. Crypto.com's `public/heartbeat` requires
+    /// `public/respond-heartbeat` echoing the same `id`).
+    ///
+    /// Default returns `None` — no response. Implementations should
+    /// keep the work fast: this is on the recv-loop critical path.
+    fn response_for(&self, _raw: &str) -> Option<String> {
+        None
+    }
 }
 
 /// A fill or status-change event for an order on the private feed.
