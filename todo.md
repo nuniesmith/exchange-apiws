@@ -697,20 +697,65 @@ Tests:
   one per endpoint (including filtered and unfiltered ticker) plus
   Api-error propagation and the empty-book edge case.
 
-### 6b. Private REST (authenticated)
+### 6b. Private REST (authenticated) ✓ DONE
 
-| Method | Endpoint |
-|--------|----------|
-| `get_account_summary(currency)` | `POST /private/get-account-summary` |
-| `place_order(instrument, side, type, quantity, price)` | `POST /private/create-order` |
-| `cancel_order(order_id)` | `POST /private/cancel-order` |
-| `cancel_all_orders(instrument)` | `POST /private/cancel-all-orders` |
-| `get_open_orders(instrument)` | `POST /private/get-open-orders` |
-| `get_order_detail(order_id)` | `POST /private/get-order-detail` |
-| `get_trades(instrument)` | `POST /private/get-trades` |
-| `get_deposit_address(currency)` | `POST /private/get-deposit-address` |
-| `create_withdrawal(currency, amount, address)` | `POST /private/create-withdrawal` |
-| `get_withdrawal_history(currency)` | `POST /private/get-withdrawal-history` |
+New `src/cryptocom/auth.rs` introduces Crypto.com's **third signing
+scheme** in the codebase (distinct from KuCoin's header-based
+HMAC-SHA256 and Kraken's HMAC-SHA512-over-SHA256). Crypto.com uses
+HMAC-SHA256 with a deterministic alphabetically-sorted params-string
+in the signature payload and the hex result placed in the JSON body's
+`sig` field — not a header.
+
+New `src/cryptocom/private.rs` exposes `CryptocomPrivateClient` with
+the 10 documented endpoints:
+
+| Method | Endpoint | Returns |
+|--------|----------|---------|
+| `get_account_summary(Option<currency>)` | `POST /private/get-account-summary` | `serde_json::Value` |
+| `place_order(instrument, side, type, qty, price?)` | `POST /private/create-order` | `serde_json::Value` |
+| `cancel_order(instrument, order_id)` | `POST /private/cancel-order` | `serde_json::Value` |
+| `cancel_all_orders(instrument)` | `POST /private/cancel-all-orders` | `serde_json::Value` |
+| `get_open_orders(Option<instrument>)` | `POST /private/get-open-orders` | `serde_json::Value` |
+| `get_order_detail(order_id)` | `POST /private/get-order-detail` | `serde_json::Value` |
+| `get_trades(Option<instrument>)` | `POST /private/get-trades` | `serde_json::Value` |
+| `get_deposit_address(currency)` | `POST /private/get-deposit-address` | `serde_json::Value` |
+| `create_withdrawal(currency, amount, address)` | `POST /private/create-withdrawal` | `serde_json::Value` |
+| `get_withdrawal_history(currency)` | `POST /private/get-withdrawal-history` | `serde_json::Value` |
+
+Returns are `serde_json::Value` rather than typed structs because the
+per-endpoint response shapes vary widely; callers can deserialise the
+fields they need.
+
+Auth implementation notes:
+- `CryptocomCredentials { api_key, api_secret }` is `ZeroizeOnDrop`,
+  loadable from `CRYPTOCOM_API_KEY` / `CRYPTOCOM_API_SECRET` env vars.
+- `sign_cryptocom_request(method, id, api_key, params, nonce, secret)`
+  builds the signature payload `method || id || api_key ||
+  params_string || nonce` and HMAC-SHA256s it with the secret;
+  returns 64-char hex.
+- `build_params_string(&Value)` is the deterministic serialiser:
+  visits object keys in **alphabetical order**, emits `key + value`
+  per pair, recurses into nested objects (with the outer label),
+  flattens arrays. Public for external use too.
+- Monotonic 64-bit `id` counter (AtomicI64) and monotonic
+  millisecond-floor nonce (AtomicU64) — both survive concurrent
+  calls. Nonce + id are injected by the client; callers don't
+  manage either.
+
+Tests:
+- 8 unit tests in `src/cryptocom/auth.rs::tests` — params-string
+  ordering, empty/null params, number/bool serialisation, nested
+  object recursion with label, signing determinism, signature
+  sensitivity to every input (method/id/api_key/params/nonce/secret),
+  64-char hex output, credentials round-trip.
+- 2 unit tests in `src/cryptocom/private.rs::tests` — nonce and id
+  monotonicity across many calls.
+- 12 wiremock integration tests in `tests/cryptocom_private_mock.rs`
+  — one per endpoint, an Api-error propagation test, plus a
+  **canonical-algorithm test** that intercepts the request body and
+  recomputes the sig from `(method, id, api_key, params, nonce)`
+  to assert the signing implementation matches the documented
+  contract bit-for-bit.
 
 ### 6c. WebSocket (`src/cryptocom/ws.rs`)
 
