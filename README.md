@@ -521,6 +521,11 @@ exchange protocols.
 
 ---
 
+## Changelog
+
+Version history with grouped Added / Changed / Fixed entries:
+[CHANGELOG.md](CHANGELOG.md).
+
 ## License
 
 MIT — see [LICENSE](LICENSE).
