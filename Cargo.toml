@@ -1,6 +1,6 @@
 [package]
 name          = "exchange-apiws"
-version       = "0.2.17"
+version       = "0.2.18"
 edition       = "2024"
 rust-version  = "1.94.1"
 authors       = ["nuniesmith"]
@@ -62,8 +62,9 @@ base64 = "0.22"
 # ── Dev / test dependencies ────────────────────────────────────────────────────
 
 [dev-dependencies]
-# Integration tests and examples need a runtime.
-tokio = { version = "1", features = ["rt-multi-thread", "macros"] }
+# Integration tests and examples need a runtime. `signal` powers the
+# ctrl-c handler in `examples/kucoin_supervised_feed`.
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "signal"] }
 # Print tracing output during `cargo test -- --nocapture`.
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 # HTTP mock server for integration tests — spins up a local server per test.
