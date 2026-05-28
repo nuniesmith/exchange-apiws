@@ -1,3 +1,5 @@
+#![cfg(feature = "cryptocom")]
+
 //! `CryptocomPrivateClient` integration tests via `wiremock`.
 //!
 //! Verifies the body-encoded signing scheme end-to-end:

@@ -1,8 +1,28 @@
 //! `exchange-apiws` — Exchange REST and WebSocket clients.
 //!
-//! Currently supports **KuCoin** (Spot, Futures, Unified).
-//! The crate is designed to be exchange-agnostic: new exchanges implement the
-//! [`actors::ExchangeConnector`] trait and the shared runner drives their feeds.
+//! Supports **KuCoin** (Spot, Futures, Unified), **Binance**, **Bybit**,
+//! **Kraken**, and **Crypto.com**. The crate is designed to be exchange-
+//! agnostic: new exchanges implement the [`actors::ExchangeConnector`]
+//! trait and the shared runner drives their feeds.
+//!
+//! # Cargo features
+//!
+//! KuCoin is the default implementation and is always on. The four other
+//! exchanges are opt-out via Cargo features:
+//!
+//! ```toml
+//! [dependencies]
+//! # All exchanges (default — same as 0.2.18 behaviour):
+//! exchange-apiws = "0.2"
+//!
+//! # KuCoin-only — smaller compile, no Kraken/Crypto.com signing code:
+//! exchange-apiws = { version = "0.2", default-features = false }
+//!
+//! # Just KuCoin + Binance:
+//! exchange-apiws = { version = "0.2", default-features = false, features = ["binance"] }
+//! ```
+//!
+//! Available features: `binance`, `bybit`, `kraken`, `cryptocom`.
 //!
 //! # Quick start
 //!
@@ -69,27 +89,40 @@
 //! └── types    — Candle, Side, OrderType, TimeInForce, STP
 //! ```
 
+// ── Always-on modules (KuCoin + shared runtime) ───────────────────────────────
+
 pub mod actors;
 pub mod auth;
-pub mod binance;
-pub mod bybit;
 pub mod client;
 pub mod connectors;
-pub mod cryptocom;
 pub mod error;
 pub mod http;
-pub mod kraken;
 pub mod rest;
 pub mod types;
 pub mod ws;
 
+// ── Optional per-exchange modules ─────────────────────────────────────────────
+
+#[cfg(feature = "binance")]
+pub mod binance;
+#[cfg(feature = "bybit")]
+pub mod bybit;
+#[cfg(feature = "cryptocom")]
+pub mod cryptocom;
+#[cfg(feature = "kraken")]
+pub mod kraken;
+
 // ── Primary re-exports ────────────────────────────────────────────────────────
 
+#[cfg(feature = "binance")]
 pub use binance::{BinanceConnector, BinanceRestClient};
+#[cfg(feature = "bybit")]
 pub use bybit::{BybitCategory, BybitConnector, BybitRestClient};
+#[cfg(feature = "cryptocom")]
 pub use cryptocom::{
     CryptocomConnector, CryptocomCredentials, CryptocomPrivateClient, CryptocomRestClient,
 };
+#[cfg(feature = "kraken")]
 pub use kraken::{KrakenConnector, KrakenCredentials, KrakenPrivateClient, KrakenRestClient};
 pub use client::{Credentials, KuCoinClient};
 pub use connectors::{ExchangeConfig, KuCoin, KucoinEnv};

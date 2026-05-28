@@ -1,3 +1,5 @@
+#![cfg(feature = "bybit")]
+
 //! Bybit public REST integration tests via `wiremock`.
 //!
 //! One test per endpoint plus an error-envelope test so the

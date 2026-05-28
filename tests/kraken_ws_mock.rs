@@ -1,3 +1,5 @@
+#![cfg(feature = "kraken")]
+
 //! Kraken v2 WS integration test via a local `tokio-tungstenite` server.
 //!
 //! Verifies the three things that distinguish Kraken from Bybit / Binance:

@@ -1,3 +1,5 @@
+#![cfg(feature = "binance")]
+
 //! Binance WS integration test via a local `tokio-tungstenite` server.
 //!
 //! Spins up a real WS endpoint that pushes Binance-format combined-stream

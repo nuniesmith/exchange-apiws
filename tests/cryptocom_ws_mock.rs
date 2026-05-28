@@ -1,3 +1,5 @@
+#![cfg(feature = "cryptocom")]
+
 //! Crypto.com WS integration test via a local `tokio-tungstenite` server.
 //!
 //! Verifies the things that distinguish Crypto.com from the other

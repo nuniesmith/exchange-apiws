@@ -1,3 +1,5 @@
+#![cfg(feature = "kraken")]
+
 //! Kraken public REST integration tests via `wiremock`.
 //!
 //! | Test | Endpoint |

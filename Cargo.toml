@@ -1,6 +1,6 @@
 [package]
 name          = "exchange-apiws"
-version       = "0.2.18"
+version       = "0.2.19"
 edition       = "2024"
 rust-version  = "1.94.1"
 authors       = ["nuniesmith"]
@@ -13,6 +13,21 @@ keywords      = ["kucoin", "crypto", "trading", "websocket", "futures"]
 categories    = ["api-bindings", "network-programming", "asynchronous"]
 
 [features]
+# Default-features enable all exchanges so existing users see no change.
+# Downstream crates that only need a subset can opt out via
+# `default-features = false` and re-enable the ones they want:
+#
+#     exchange-apiws = { version = "0.2", default-features = false, features = ["kucoin", "binance"] }
+#
+# KuCoin is the original implementation and is always on — most of its
+# code lives in the crate's shared modules (auth, client, ws/runner) and
+# can't be cleanly gated without splitting the crate.
+default    = ["binance", "bybit", "kraken", "cryptocom"]
+binance    = []
+bybit      = []
+kraken     = []
+cryptocom  = []
+
 # Expose development-only helpers (e.g. `Credentials::sim()`) in non-test
 # binaries. Never enable this in production builds.
 testutils = []
@@ -77,6 +92,32 @@ wiremock = "0.6"
 # Previously incorrectly set to "indicators" (copy/paste from another project).
 name = "exchange_apiws"
 path = "src/lib.rs"
+
+# ── Examples (gated by exchange feature) ──────────────────────────────────────
+
+[[example]]
+name = "binance_public_market"
+required-features = ["binance"]
+
+[[example]]
+name = "bybit_public_market"
+required-features = ["bybit"]
+
+[[example]]
+name = "kraken_public_market"
+required-features = ["kraken"]
+
+[[example]]
+name = "cryptocom_public_market"
+required-features = ["cryptocom"]
+
+[[example]]
+name = "multi_exchange_aggregator"
+required-features = ["binance", "bybit"]
+
+# kucoin_supervised_feed has no required-features — KuCoin is always on.
+[[example]]
+name = "kucoin_supervised_feed"
 
 # ── Build profiles ─────────────────────────────────────────────────────────────
 

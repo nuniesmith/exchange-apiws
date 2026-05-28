@@ -130,6 +130,24 @@ exchange-apiws = "0.2"
 tokio = { version = "1", features = ["rt-multi-thread", "macros"] }
 ```
 
+### Per-exchange Cargo features
+
+The four non-KuCoin exchanges are opt-out via Cargo features
+(`binance`, `bybit`, `kraken`, `cryptocom` — all in `default`). Trim
+the dependency footprint by disabling unused exchanges:
+
+```toml
+# KuCoin-only
+exchange-apiws = { version = "0.2", default-features = false }
+
+# KuCoin + Binance
+exchange-apiws = { version = "0.2", default-features = false, features = ["binance"] }
+```
+
+KuCoin and the shared runtime (`actors`, `client`, `auth`, `http`,
+`rest`, `ws`) stay always-on — they're the runtime infrastructure
+the other exchanges build on.
+
 Set credentials per the exchange you're using:
 
 ```
