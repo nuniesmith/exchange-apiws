@@ -1,6 +1,6 @@
 [package]
 name          = "exchange-apiws"
-version       = "0.2.19"
+version       = "0.2.20"
 edition       = "2024"
 rust-version  = "1.94.1"
 authors       = ["nuniesmith"]
@@ -11,6 +11,11 @@ documentation = "https://docs.rs/exchange-apiws"
 readme        = "README.md"
 keywords      = ["kucoin", "crypto", "trading", "websocket", "futures"]
 categories    = ["api-bindings", "network-programming", "asynchronous"]
+
+# Keep the published crate lean — internal planning notes, dev tooling, and
+# generated lint reports aren't useful to downstream consumers. `src/`,
+# `tests/`, `examples/`, README, CHANGELOG, and LICENSE still ship.
+exclude = ["todo.md", "scripts/", "lint_report.md", "lint_report_bin", "/.github"]
 
 [features]
 # Default-features enable all exchanges so existing users see no change.
