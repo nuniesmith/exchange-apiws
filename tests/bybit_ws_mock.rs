@@ -1,3 +1,5 @@
+#![cfg(feature = "bybit")]
+
 //! Bybit WS integration test via a local `tokio-tungstenite` server.
 //!
 //! Verifies the two paths that distinguish Bybit from Binance:

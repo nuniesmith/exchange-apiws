@@ -8,6 +8,45 @@ and the project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.
 
 — nothing yet —
 
+## [0.2.19] – 2026-05-27
+
+### Added
+
+- **Per-exchange Cargo features** — `binance`, `bybit`, `kraken`,
+  `cryptocom`. All four are in the `default` feature set so existing
+  users see no change. Downstream crates can opt out via
+  `default-features = false`:
+  ```toml
+  exchange-apiws = { version = "0.2", default-features = false, features = ["binance"] }
+  ```
+  KuCoin (and the shared runtime: `actors`, `client`, `auth`,
+  `connectors`, `http`, `rest`, `ws`, `types`) stay always-on — most
+  of that code is the runtime infrastructure the other exchanges
+  build on. Integration tests and the `examples/` binaries gate
+  themselves to their owning feature via `#![cfg(feature = "…")]`
+  (tests) and `required-features` (`[[example]]` entries in
+  `Cargo.toml`).
+
+## [0.2.18] – 2026-05-27
+
+### Added
+
+- **`examples/` directory** — six runnable binaries (one per exchange
+  plus `multi_exchange_aggregator` and `kucoin_supervised_feed`).
+  `cargo run --example <name>` works for each. The README gains a
+  table linking them all.
+- `tokio` gains the `signal` feature in `[dev-dependencies]` for the
+  Ctrl-C handler in `kucoin_supervised_feed`. Library `[dependencies]`
+  is unchanged.
+
+## [0.2.17] – 2026-05-27
+
+### Added
+
+- **`CHANGELOG.md`** in Keep a Changelog format, tracking every
+  version 0.1.11 → 0.2.16 with grouped Added / Changed / Fixed
+  entries and GitHub compare links. README links to it.
+
 ## [0.2.16] – 2026-05-27
 
 ### Changed
@@ -245,7 +284,10 @@ Initial KuCoin Futures REST + WebSocket implementation, including:
 - Bullet-public / bullet-private WS token negotiation
 - 100 msg / 10 s sliding-window outbound rate limit
 
-[Unreleased]: https://github.com/nuniesmith/exchange-apiws/compare/v0.2.16...HEAD
+[Unreleased]: https://github.com/nuniesmith/exchange-apiws/compare/v0.2.19...HEAD
+[0.2.19]: https://github.com/nuniesmith/exchange-apiws/compare/v0.2.18...v0.2.19
+[0.2.18]: https://github.com/nuniesmith/exchange-apiws/compare/v0.2.17...v0.2.18
+[0.2.17]: https://github.com/nuniesmith/exchange-apiws/compare/v0.2.16...v0.2.17
 [0.2.16]: https://github.com/nuniesmith/exchange-apiws/compare/v0.2.15...v0.2.16
 [0.2.15]: https://github.com/nuniesmith/exchange-apiws/compare/v0.2.14...v0.2.15
 [0.2.14]: https://github.com/nuniesmith/exchange-apiws/compare/v0.2.13...v0.2.14

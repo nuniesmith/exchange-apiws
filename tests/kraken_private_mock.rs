@@ -1,3 +1,5 @@
+#![cfg(feature = "kraken")]
+
 //! `KrakenPrivateClient` integration tests via `wiremock`.
 //!
 //! Verifies the authenticated flow end-to-end:

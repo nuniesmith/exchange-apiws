@@ -1,3 +1,5 @@
+#![cfg(feature = "binance")]
+
 //! Binance public REST integration tests via `wiremock`.
 //!
 //! Each test stands up a mock HTTP server and exercises one endpoint

@@ -1,3 +1,5 @@
+#![cfg(feature = "cryptocom")]
+
 //! Crypto.com public REST integration tests via `wiremock`.
 //!
 //! | Test | Endpoint |
