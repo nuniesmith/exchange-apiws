@@ -1,3 +1,4 @@
+#![allow(missing_docs)] // empty crate when feature off; no-op when on
 #![cfg(feature = "kraken")]
 
 //! Kraken public REST integration tests via `wiremock`.
@@ -57,15 +58,17 @@ async fn get_assets_returns_map() {
     let server = MockServer::start().await;
     Mock::given(method("GET"))
         .and(path("/0/public/Assets"))
-        .respond_with(ResponseTemplate::new(200).set_body_json(ok_envelope(serde_json::json!({
-            "XXBT": {
-                "aclass":"currency","altname":"XBT","decimals":10,"display_decimals":5,
-                "collateral_value":1.0,"status":"enabled"
-            },
-            "ZUSD": {
-                "aclass":"currency","altname":"USD","decimals":4,"display_decimals":2
-            }
-        }))))
+        .respond_with(
+            ResponseTemplate::new(200).set_body_json(ok_envelope(serde_json::json!({
+                "XXBT": {
+                    "aclass":"currency","altname":"XBT","decimals":10,"display_decimals":5,
+                    "collateral_value":1.0,"status":"enabled"
+                },
+                "ZUSD": {
+                    "aclass":"currency","altname":"USD","decimals":4,"display_decimals":2
+                }
+            }))),
+        )
         .expect(1)
         .mount(&server)
         .await;
@@ -83,14 +86,16 @@ async fn get_asset_pairs_with_filter_returns_one_pair() {
     Mock::given(method("GET"))
         .and(path("/0/public/AssetPairs"))
         .and(query_param("pair", "XBTUSD"))
-        .respond_with(ResponseTemplate::new(200).set_body_json(ok_envelope(serde_json::json!({
-            "XXBTZUSD": {
-                "altname":"XBTUSD","wsname":"XBT/USD",
-                "base":"XXBT","quote":"ZUSD",
-                "pair_decimals":1,"lot_decimals":8,"lot_multiplier":1,
-                "status":"online"
-            }
-        }))))
+        .respond_with(
+            ResponseTemplate::new(200).set_body_json(ok_envelope(serde_json::json!({
+                "XXBTZUSD": {
+                    "altname":"XBTUSD","wsname":"XBT/USD",
+                    "base":"XXBT","quote":"ZUSD",
+                    "pair_decimals":1,"lot_decimals":8,"lot_multiplier":1,
+                    "status":"online"
+                }
+            }))),
+        )
         .expect(1)
         .mount(&server)
         .await;
@@ -111,16 +116,18 @@ async fn get_asset_pairs_unfiltered_returns_all_pairs() {
     let server = MockServer::start().await;
     Mock::given(method("GET"))
         .and(path("/0/public/AssetPairs"))
-        .respond_with(ResponseTemplate::new(200).set_body_json(ok_envelope(serde_json::json!({
-            "XXBTZUSD": {
-                "altname":"XBTUSD","base":"XXBT","quote":"ZUSD",
-                "pair_decimals":1,"lot_decimals":8,"lot_multiplier":1
-            },
-            "XETHZUSD": {
-                "altname":"ETHUSD","base":"XETH","quote":"ZUSD",
-                "pair_decimals":2,"lot_decimals":8,"lot_multiplier":1
-            }
-        }))))
+        .respond_with(
+            ResponseTemplate::new(200).set_body_json(ok_envelope(serde_json::json!({
+                "XXBTZUSD": {
+                    "altname":"XBTUSD","base":"XXBT","quote":"ZUSD",
+                    "pair_decimals":1,"lot_decimals":8,"lot_multiplier":1
+                },
+                "XETHZUSD": {
+                    "altname":"ETHUSD","base":"XETH","quote":"ZUSD",
+                    "pair_decimals":2,"lot_decimals":8,"lot_multiplier":1
+                }
+            }))),
+        )
         .expect(1)
         .mount(&server)
         .await;
@@ -140,19 +147,21 @@ async fn get_ticker_returns_keyed_entry() {
     Mock::given(method("GET"))
         .and(path("/0/public/Ticker"))
         .and(query_param("pair", "XBTUSD"))
-        .respond_with(ResponseTemplate::new(200).set_body_json(ok_envelope(serde_json::json!({
-            "XXBTZUSD": {
-                "a": ["96001.0", "1", "1.000"],
-                "b": ["95999.0", "1", "1.000"],
-                "c": ["96000.0", "0.01"],
-                "v": ["10.5", "100.5"],
-                "p": ["95950.0", "95800.0"],
-                "t": [100, 1000],
-                "l": ["95500.0", "95000.0"],
-                "h": ["96500.0", "97000.0"],
-                "o": "95750.0"
-            }
-        }))))
+        .respond_with(
+            ResponseTemplate::new(200).set_body_json(ok_envelope(serde_json::json!({
+                "XXBTZUSD": {
+                    "a": ["96001.0", "1", "1.000"],
+                    "b": ["95999.0", "1", "1.000"],
+                    "c": ["96000.0", "0.01"],
+                    "v": ["10.5", "100.5"],
+                    "p": ["95950.0", "95800.0"],
+                    "t": [100, 1000],
+                    "l": ["95500.0", "95000.0"],
+                    "h": ["96500.0", "97000.0"],
+                    "o": "95750.0"
+                }
+            }))),
+        )
         .expect(1)
         .mount(&server)
         .await;
@@ -227,12 +236,14 @@ async fn get_recent_trades_returns_raw_value() {
     Mock::given(method("GET"))
         .and(path("/0/public/Trades"))
         .and(query_param("pair", "XBTUSD"))
-        .respond_with(ResponseTemplate::new(200).set_body_json(ok_envelope(serde_json::json!({
-            "XXBTZUSD": [
-                ["96000.0","0.001",1_700_000_000.123_f64,"b","l",""]
-            ],
-            "last": "1700000060123456789"
-        }))))
+        .respond_with(
+            ResponseTemplate::new(200).set_body_json(ok_envelope(serde_json::json!({
+                "XXBTZUSD": [
+                    ["96000.0","0.001",1_700_000_000.123_f64,"b","l",""]
+                ],
+                "last": "1700000060123456789"
+            }))),
+        )
         .expect(1)
         .mount(&server)
         .await;
@@ -251,10 +262,12 @@ async fn get_spread_returns_raw_value() {
     Mock::given(method("GET"))
         .and(path("/0/public/Spread"))
         .and(query_param("pair", "XBTUSD"))
-        .respond_with(ResponseTemplate::new(200).set_body_json(ok_envelope(serde_json::json!({
-            "XXBTZUSD": [[1_700_000_000_u64, "95999.0", "96001.0"]],
-            "last": 1_700_000_060_u64
-        }))))
+        .respond_with(
+            ResponseTemplate::new(200).set_body_json(ok_envelope(serde_json::json!({
+                "XXBTZUSD": [[1_700_000_000_u64, "95999.0", "96001.0"]],
+                "last": 1_700_000_060_u64
+            }))),
+        )
         .expect(1)
         .mount(&server)
         .await;

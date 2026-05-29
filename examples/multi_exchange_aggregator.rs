@@ -38,10 +38,7 @@ async fn main() -> exchange_apiws::Result<()> {
         vec![BybitConnector::trade_topic("BTCUSDT")],
     ));
     let bybit_url = bybit.ws_url().to_string();
-    let bybit_subs: Vec<String> = bybit
-        .subscription_message("")
-        .into_iter()
-        .collect();
+    let bybit_subs: Vec<String> = bybit.subscription_message("").into_iter().collect();
 
     // Spawn both feeds.
     let binance_handle = tokio::spawn(run_feed(

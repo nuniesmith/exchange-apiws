@@ -191,10 +191,7 @@ mod tests {
             "z": "last"
         });
         // Outer emits "outer" + (sorted-inner serialised): "outerinner_axinner_byzlast"
-        assert_eq!(
-            build_params_string(&p),
-            "outerinner_axinner_byzlast"
-        );
+        assert_eq!(build_params_string(&p), "outerinner_axinner_byzlast");
     }
 
     #[test]

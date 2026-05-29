@@ -199,8 +199,11 @@ impl ExchangeConnector for BybitConnector {
         let Some(data) = json.get("data") else {
             return Ok(vec![]);
         };
-        let is_snapshot =
-            json.get("type").and_then(Value::as_str).unwrap_or("snapshot") == "snapshot";
+        let is_snapshot = json
+            .get("type")
+            .and_then(Value::as_str)
+            .unwrap_or("snapshot")
+            == "snapshot";
 
         if topic.starts_with("publicTrade.") {
             Ok(parse_trade_batch(data))
@@ -230,7 +233,9 @@ fn str_f64(v: &Value, key: &str) -> f64 {
 }
 
 fn opt_str_f64(v: &Value, key: &str) -> Option<f64> {
-    v.get(key).and_then(Value::as_str).and_then(|s| s.parse().ok())
+    v.get(key)
+        .and_then(Value::as_str)
+        .and_then(|s| s.parse().ok())
 }
 
 fn parse_levels(v: &Value) -> Vec<[f64; 2]> {
@@ -526,9 +531,15 @@ mod tests {
 
     #[test]
     fn topic_builders_format() {
-        assert_eq!(BybitConnector::trade_topic("BTCUSDT"), "publicTrade.BTCUSDT");
+        assert_eq!(
+            BybitConnector::trade_topic("BTCUSDT"),
+            "publicTrade.BTCUSDT"
+        );
         assert_eq!(BybitConnector::ticker_topic("BTCUSDT"), "tickers.BTCUSDT");
-        assert_eq!(BybitConnector::kline_topic("BTCUSDT", "1"), "kline.1.BTCUSDT");
+        assert_eq!(
+            BybitConnector::kline_topic("BTCUSDT", "1"),
+            "kline.1.BTCUSDT"
+        );
         assert_eq!(
             BybitConnector::orderbook_topic("BTCUSDT", 50),
             "orderbook.50.BTCUSDT"
@@ -537,15 +548,21 @@ mod tests {
 
     #[test]
     fn ws_url_per_category() {
-        assert!(BybitConnector::new(BybitCategory::Spot, vec![])
-            .url
-            .ends_with("/v5/public/spot"));
-        assert!(BybitConnector::new(BybitCategory::Linear, vec![])
-            .url
-            .ends_with("/v5/public/linear"));
-        assert!(BybitConnector::new(BybitCategory::Inverse, vec![])
-            .url
-            .ends_with("/v5/public/inverse"));
+        assert!(
+            BybitConnector::new(BybitCategory::Spot, vec![])
+                .url
+                .ends_with("/v5/public/spot")
+        );
+        assert!(
+            BybitConnector::new(BybitCategory::Linear, vec![])
+                .url
+                .ends_with("/v5/public/linear")
+        );
+        assert!(
+            BybitConnector::new(BybitCategory::Inverse, vec![])
+                .url
+                .ends_with("/v5/public/inverse")
+        );
     }
 
     #[test]

@@ -1,3 +1,4 @@
+#![allow(missing_docs)] // empty crate when feature off; no-op when on
 #![cfg(feature = "cryptocom")]
 
 //! Crypto.com public REST integration tests via `wiremock`.
@@ -41,27 +42,29 @@ async fn get_instruments_returns_list() {
     let server = MockServer::start().await;
     Mock::given(method("GET"))
         .and(path("/public/get-instruments"))
-        .respond_with(ResponseTemplate::new(200).set_body_json(ok_envelope(serde_json::json!({
-            "data": [
-                {
-                    "symbol": "BTC_USDT",
-                    "inst_type": "CCY_PAIR",
-                    "display_name": "BTC/USDT",
-                    "base_ccy": "BTC",
-                    "quote_ccy": "USDT",
-                    "quote_decimals": 2,
-                    "quantity_decimals": 8,
-                    "price_tick_size": "0.01",
-                    "qty_tick_size": "0.00000001",
-                    "max_leverage": "10",
-                    "tradable": true
-                },
-                {
-                    "symbol": "ETH_USDT",
-                    "tradable": false
-                }
-            ]
-        }))))
+        .respond_with(
+            ResponseTemplate::new(200).set_body_json(ok_envelope(serde_json::json!({
+                "data": [
+                    {
+                        "symbol": "BTC_USDT",
+                        "inst_type": "CCY_PAIR",
+                        "display_name": "BTC/USDT",
+                        "base_ccy": "BTC",
+                        "quote_ccy": "USDT",
+                        "quote_decimals": 2,
+                        "quantity_decimals": 8,
+                        "price_tick_size": "0.01",
+                        "qty_tick_size": "0.00000001",
+                        "max_leverage": "10",
+                        "tradable": true
+                    },
+                    {
+                        "symbol": "ETH_USDT",
+                        "tradable": false
+                    }
+                ]
+            }))),
+        )
         .expect(1)
         .mount(&server)
         .await;
@@ -84,16 +87,18 @@ async fn get_orderbook_unwraps_single_book() {
         .and(path("/public/get-book"))
         .and(query_param("instrument_name", "BTC_USDT"))
         .and(query_param("depth", "10"))
-        .respond_with(ResponseTemplate::new(200).set_body_json(ok_envelope(serde_json::json!({
-            "data": [{
-                "instrument_name": "BTC_USDT",
-                "depth": 10,
-                "bids": [["96000.0","1.5","2"], ["95999.0","2.0","3"]],
-                "asks": [["96001.0","0.5","1"]],
-                "timestamp": 1_700_000_000_000_u64,
-                "sequence": 42
-            }]
-        }))))
+        .respond_with(
+            ResponseTemplate::new(200).set_body_json(ok_envelope(serde_json::json!({
+                "data": [{
+                    "instrument_name": "BTC_USDT",
+                    "depth": 10,
+                    "bids": [["96000.0","1.5","2"], ["95999.0","2.0","3"]],
+                    "asks": [["96001.0","0.5","1"]],
+                    "timestamp": 1_700_000_000_000_u64,
+                    "sequence": 42
+                }]
+            }))),
+        )
         .expect(1)
         .mount(&server)
         .await;
@@ -144,13 +149,15 @@ async fn get_ticker_with_instrument_returns_one() {
     Mock::given(method("GET"))
         .and(path("/public/get-ticker"))
         .and(query_param("instrument_name", "BTC_USDT"))
-        .respond_with(ResponseTemplate::new(200).set_body_json(ok_envelope(serde_json::json!({
-            "data": [{
-                "i":"BTC_USDT","a":"96000.0","h":"96500.0","l":"95500.0",
-                "v":"100.5","vv":"9650000","c":"0.005",
-                "b":"95999.0","k":"96001.0","t":1_700_000_000_000_u64
-            }]
-        }))))
+        .respond_with(
+            ResponseTemplate::new(200).set_body_json(ok_envelope(serde_json::json!({
+                "data": [{
+                    "i":"BTC_USDT","a":"96000.0","h":"96500.0","l":"95500.0",
+                    "v":"100.5","vv":"9650000","c":"0.005",
+                    "b":"95999.0","k":"96001.0","t":1_700_000_000_000_u64
+                }]
+            }))),
+        )
         .expect(1)
         .mount(&server)
         .await;
@@ -170,12 +177,14 @@ async fn get_ticker_unfiltered_returns_all() {
     let server = MockServer::start().await;
     Mock::given(method("GET"))
         .and(path("/public/get-ticker"))
-        .respond_with(ResponseTemplate::new(200).set_body_json(ok_envelope(serde_json::json!({
-            "data": [
-                {"i":"BTC_USDT","a":"96000.0","t":1_700_000_000_000_u64},
-                {"i":"ETH_USDT","a":"3200.0","t":1_700_000_000_000_u64}
-            ]
-        }))))
+        .respond_with(
+            ResponseTemplate::new(200).set_body_json(ok_envelope(serde_json::json!({
+                "data": [
+                    {"i":"BTC_USDT","a":"96000.0","t":1_700_000_000_000_u64},
+                    {"i":"ETH_USDT","a":"3200.0","t":1_700_000_000_000_u64}
+                ]
+            }))),
+        )
         .expect(1)
         .mount(&server)
         .await;
@@ -223,14 +232,16 @@ async fn get_valuations_returns_time_series() {
         .and(path("/public/get-valuations"))
         .and(query_param("instrument_name", "BTCUSD-PERP"))
         .and(query_param("valuation_type", "mark_price"))
-        .respond_with(ResponseTemplate::new(200).set_body_json(ok_envelope(serde_json::json!({
-            "instrument_name": "BTCUSD-PERP",
-            "valuation_type": "mark_price",
-            "data": [
-                {"v":"96010.0","t":1_700_000_000_000_u64},
-                {"v":"96015.0","t":1_700_000_001_000_u64}
-            ]
-        }))))
+        .respond_with(
+            ResponseTemplate::new(200).set_body_json(ok_envelope(serde_json::json!({
+                "instrument_name": "BTCUSD-PERP",
+                "valuation_type": "mark_price",
+                "data": [
+                    {"v":"96010.0","t":1_700_000_000_000_u64},
+                    {"v":"96015.0","t":1_700_000_001_000_u64}
+                ]
+            }))),
+        )
         .expect(1)
         .mount(&server)
         .await;
@@ -275,9 +286,11 @@ async fn orderbook_with_empty_data_array_errors() {
     let server = MockServer::start().await;
     Mock::given(method("GET"))
         .and(path("/public/get-book"))
-        .respond_with(ResponseTemplate::new(200).set_body_json(ok_envelope(serde_json::json!({
-            "data": []
-        }))))
+        .respond_with(
+            ResponseTemplate::new(200).set_body_json(ok_envelope(serde_json::json!({
+                "data": []
+            }))),
+        )
         .expect(1)
         .mount(&server)
         .await;

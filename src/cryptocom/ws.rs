@@ -194,7 +194,7 @@ impl ExchangeConnector for CryptocomConnector {
 
     /// Crypto.com's heartbeat is server-initiated — no client ping is
     /// needed. The required response is generated inside
-    /// [`response_for`] instead.
+    /// [`Self::response_for`] instead.
     fn ping_message(&self) -> Option<String> {
         None
     }
@@ -239,8 +239,11 @@ impl ExchangeConnector for CryptocomConnector {
             .and_then(Value::as_str)
             .unwrap_or("")
             .to_string();
-        let is_snapshot =
-            result.get("type").and_then(Value::as_str).unwrap_or("update") == "snapshot";
+        let is_snapshot = result
+            .get("type")
+            .and_then(Value::as_str)
+            .unwrap_or("update")
+            == "snapshot";
 
         match channel {
             "trade" => Ok(parse_trades(data, &instrument)),
@@ -290,11 +293,7 @@ fn parse_trades(data: &[Value], instrument_fallback: &str) -> Vec<DataMessage> {
                 amount: flexible_f64(t, "q"),
                 exchange_ts: t.get("t").and_then(Value::as_i64).unwrap_or(0),
                 receipt_ts: now_ms(),
-                trade_id: t
-                    .get("d")
-                    .and_then(Value::as_str)
-                    .unwrap_or("")
-                    .to_string(),
+                trade_id: t.get("d").and_then(Value::as_str).unwrap_or("").to_string(),
             })
         })
         .collect()
@@ -415,7 +414,10 @@ mod tests {
 
     #[test]
     fn channel_builders_format() {
-        assert_eq!(CryptocomConnector::trade_channel("BTC_USDT"), "trade.BTC_USDT");
+        assert_eq!(
+            CryptocomConnector::trade_channel("BTC_USDT"),
+            "trade.BTC_USDT"
+        );
         assert_eq!(
             CryptocomConnector::ticker_channel("BTC_USDT"),
             "ticker.BTC_USDT"
@@ -618,8 +620,7 @@ mod tests {
         // Private channels (user.order, user.balance) will appear here
         // when callers subscribe to them; the parser ignores them
         // rather than erroring so custom subs keep working.
-        let raw =
-            r#"{"result":{"channel":"user.order","data":[{"x":"y"}],"instrument_name":"BTC_USDT"}}"#;
+        let raw = r#"{"result":{"channel":"user.order","data":[{"x":"y"}],"instrument_name":"BTC_USDT"}}"#;
         assert!(connector().parse_message(raw).expect("parse").is_empty());
     }
 }

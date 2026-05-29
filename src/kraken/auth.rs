@@ -190,8 +190,10 @@ mod tests {
     fn sign_is_deterministic() {
         let secret = sim_secret_b64();
         let body = "nonce=1700000000000&pair=XBTUSD";
-        let a = sign_kraken_request("/0/private/Balance", 1_700_000_000_000, body, &secret).unwrap();
-        let b = sign_kraken_request("/0/private/Balance", 1_700_000_000_000, body, &secret).unwrap();
+        let a =
+            sign_kraken_request("/0/private/Balance", 1_700_000_000_000, body, &secret).unwrap();
+        let b =
+            sign_kraken_request("/0/private/Balance", 1_700_000_000_000, body, &secret).unwrap();
         assert_eq!(a, b);
     }
 

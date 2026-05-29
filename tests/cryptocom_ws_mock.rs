@@ -1,3 +1,4 @@
+#![allow(missing_docs)] // empty crate when feature off; no-op when on
 #![cfg(feature = "cryptocom")]
 
 //! Crypto.com WS integration test via a local `tokio-tungstenite` server.
@@ -213,7 +214,10 @@ async fn run_feed_subscribes_responds_to_heartbeat_and_delivers_all_variants() {
         })
         .collect();
     let trade_count = kinds.iter().filter(|k| **k == "trade").count();
-    assert_eq!(trade_count, 2, "expected 2 trades from the batch: {kinds:?}");
+    assert_eq!(
+        trade_count, 2,
+        "expected 2 trades from the batch: {kinds:?}"
+    );
     assert!(kinds.contains(&"ticker"));
     assert!(kinds.contains(&"candle"));
     assert!(kinds.contains(&"orderbook"));

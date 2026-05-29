@@ -82,9 +82,7 @@ pub(super) mod str_i64 {
 /// serde adapter: optional `f64` carried as an optional/empty string.
 pub(super) mod opt_str_f64 {
     use serde::{Deserialize, Deserializer};
-    pub(super) fn deserialize<'de, D: Deserializer<'de>>(
-        d: D,
-    ) -> Result<Option<f64>, D::Error> {
+    pub(super) fn deserialize<'de, D: Deserializer<'de>>(d: D) -> Result<Option<f64>, D::Error> {
         #[derive(Deserialize)]
         #[serde(untagged)]
         enum W {
@@ -662,8 +660,7 @@ mod tests {
 
     #[test]
     fn kline_deserializes_from_array_shape() {
-        let raw =
-            r#"["1672041600000", "16513.00", "16550.00", "16500.00", "16540.00", "0.000076", "1.255988"]"#;
+        let raw = r#"["1672041600000", "16513.00", "16550.00", "16500.00", "16540.00", "0.000076", "1.255988"]"#;
         let k: BybitKline = serde_json::from_str(raw).expect("kline deserialize");
         assert_eq!(k.start_time, 1_672_041_600_000);
         assert!((k.open - 16_513.0).abs() < 1e-6);

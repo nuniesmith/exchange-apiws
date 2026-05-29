@@ -1,3 +1,4 @@
+#![allow(missing_docs)] // empty crate when feature off; no-op when on
 #![cfg(feature = "kraken")]
 
 //! Kraken v2 WS integration test via a local `tokio-tungstenite` server.
@@ -156,7 +157,12 @@ async fn run_feed_subscribes_pings_and_delivers_all_variants() {
     // 1) The runner sent ONE subscribe frame per channel (4 total).
     // Snapshot the captured subscribes and release the lock immediately.
     let subs: Vec<String> = captured_subscribes.lock().await.clone();
-    assert_eq!(subs.len(), 4, "expected 4 subscribe frames, got {}", subs.len());
+    assert_eq!(
+        subs.len(),
+        4,
+        "expected 4 subscribe frames, got {}",
+        subs.len()
+    );
     let channels: Vec<String> = subs
         .iter()
         .filter_map(|s| serde_json::from_str::<serde_json::Value>(s).ok())

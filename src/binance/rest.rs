@@ -7,8 +7,7 @@
 //! - **Spot:**    `https://api.binance.com`
 //! - **Futures:** `https://fapi.binance.com` (USDT-M perpetual)
 //!
-//! Both are wrapped by the same [`PublicRestClient`](crate::http::PublicRestClient)
-//! retry/backoff logic.
+//! Both are wrapped by the same [`PublicRestClient`] retry/backoff logic.
 //!
 //! # Example
 //!
@@ -162,7 +161,11 @@ impl BinanceKline {
     /// `is_closed` is set to `true` since REST klines are always finalised
     /// — only WS streams emit in-progress bars.
     #[must_use]
-    pub fn into_candle_data(self, symbol: impl Into<String>, interval: impl Into<String>) -> CandleData {
+    pub fn into_candle_data(
+        self,
+        symbol: impl Into<String>,
+        interval: impl Into<String>,
+    ) -> CandleData {
         CandleData {
             symbol: symbol.into(),
             exchange: EXCHANGE_NAME.into(),
@@ -331,9 +334,7 @@ pub struct BinanceFundingRate {
 pub(super) mod opt_str_f64 {
     use serde::{Deserialize, Deserializer, Serializer};
 
-    pub(super) fn deserialize<'de, D: Deserializer<'de>>(
-        d: D,
-    ) -> Result<Option<f64>, D::Error> {
+    pub(super) fn deserialize<'de, D: Deserializer<'de>>(d: D) -> Result<Option<f64>, D::Error> {
         #[derive(Deserialize)]
         #[serde(untagged)]
         enum Wrapper {
@@ -482,25 +483,15 @@ impl BinanceRestClient {
     pub async fn get_orderbook(&self, symbol: &str, limit: u32) -> Result<BinanceOrderBook> {
         let limit = limit_str(limit);
         self.spot
-            .get(
-                "/api/v3/depth",
-                &[("symbol", symbol), ("limit", &limit)],
-            )
+            .get("/api/v3/depth", &[("symbol", symbol), ("limit", &limit)])
             .await
     }
 
     /// `GET /api/v3/trades` — most-recent trades for `symbol`.
-    pub async fn get_recent_trades(
-        &self,
-        symbol: &str,
-        limit: u32,
-    ) -> Result<Vec<BinanceTrade>> {
+    pub async fn get_recent_trades(&self, symbol: &str, limit: u32) -> Result<Vec<BinanceTrade>> {
         let limit = limit_str(limit);
         self.spot
-            .get(
-                "/api/v3/trades",
-                &[("symbol", symbol), ("limit", &limit)],
-            )
+            .get("/api/v3/trades", &[("symbol", symbol), ("limit", &limit)])
             .await
     }
 
@@ -579,10 +570,7 @@ impl BinanceRestClient {
     }
 
     /// `GET /fapi/v1/openInterest` — total open interest for `symbol`.
-    pub async fn get_futures_open_interest(
-        &self,
-        symbol: &str,
-    ) -> Result<BinanceOpenInterest> {
+    pub async fn get_futures_open_interest(&self, symbol: &str) -> Result<BinanceOpenInterest> {
         self.futures
             .get("/fapi/v1/openInterest", &[("symbol", symbol)])
             .await

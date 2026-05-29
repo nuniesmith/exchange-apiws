@@ -1,3 +1,4 @@
+#![allow(missing_docs)] // empty crate when feature off; no-op when on
 #![cfg(feature = "bybit")]
 
 //! Bybit public REST integration tests via `wiremock`.
@@ -79,15 +80,15 @@ async fn get_orderbook_returns_levels() {
         .and(query_param("category", "spot"))
         .and(query_param("symbol", "BTCUSDT"))
         .and(query_param("limit", "5"))
-        .respond_with(ResponseTemplate::new(200).set_body_json(ok_envelope(
-            serde_json::json!({
+        .respond_with(
+            ResponseTemplate::new(200).set_body_json(ok_envelope(serde_json::json!({
                 "s": "BTCUSDT",
                 "b": [["96000.00", "1.5"], ["95999.50", "2.0"]],
                 "a": [["96000.50", "0.8"], ["96001.00", "3.0"]],
                 "ts": 1_700_000_000_000_u64,
                 "u": 1_234_567_890_u64
-            }),
-        )))
+            }))),
+        )
         .expect(1)
         .mount(&server)
         .await;
@@ -109,8 +110,8 @@ async fn get_tickers_returns_list() {
         .and(path("/v5/market/tickers"))
         .and(query_param("category", "linear"))
         .and(query_param("symbol", "BTCUSDT"))
-        .respond_with(ResponseTemplate::new(200).set_body_json(ok_envelope(
-            serde_json::json!({
+        .respond_with(
+            ResponseTemplate::new(200).set_body_json(ok_envelope(serde_json::json!({
                 "category": "linear",
                 "list": [{
                     "symbol": "BTCUSDT",
@@ -128,8 +129,8 @@ async fn get_tickers_returns_list() {
                     "fundingRate": "0.0001",
                     "nextFundingTime": "1700028800000"
                 }]
-            }),
-        )))
+            }))),
+        )
         .expect(1)
         .mount(&server)
         .await;
@@ -154,8 +155,8 @@ async fn get_recent_trades_returns_list() {
         .and(query_param("category", "spot"))
         .and(query_param("symbol", "BTCUSDT"))
         .and(query_param("limit", "2"))
-        .respond_with(ResponseTemplate::new(200).set_body_json(ok_envelope(
-            serde_json::json!({
+        .respond_with(
+            ResponseTemplate::new(200).set_body_json(ok_envelope(serde_json::json!({
                 "category": "spot",
                 "list": [
                     {
@@ -175,8 +176,8 @@ async fn get_recent_trades_returns_list() {
                         "time": "1700000000500"
                     }
                 ]
-            }),
-        )))
+            }))),
+        )
         .expect(1)
         .mount(&server)
         .await;
@@ -197,12 +198,12 @@ async fn get_instruments_returns_raw_json() {
     Mock::given(method("GET"))
         .and(path("/v5/market/instruments-info"))
         .and(query_param("category", "linear"))
-        .respond_with(ResponseTemplate::new(200).set_body_json(ok_envelope(
-            serde_json::json!({
+        .respond_with(
+            ResponseTemplate::new(200).set_body_json(ok_envelope(serde_json::json!({
                 "category": "linear",
                 "list": [{"symbol": "BTCUSDT", "status": "Trading"}]
-            }),
-        )))
+            }))),
+        )
         .expect(1)
         .mount(&server)
         .await;
@@ -254,12 +255,12 @@ async fn get_open_interest_returns_series() {
         .and(query_param("symbol", "BTCUSDT"))
         .and(query_param("intervalTime", "1h"))
         .and(query_param("limit", "1"))
-        .respond_with(ResponseTemplate::new(200).set_body_json(ok_envelope(
-            serde_json::json!({
+        .respond_with(
+            ResponseTemplate::new(200).set_body_json(ok_envelope(serde_json::json!({
                 "category": "linear",
                 "list": [{"openInterest": "12345.678", "timestamp": "1700000000000"}]
-            }),
-        )))
+            }))),
+        )
         .expect(1)
         .mount(&server)
         .await;
@@ -281,8 +282,8 @@ async fn get_long_short_ratio_returns_series() {
         .and(query_param("symbol", "BTCUSDT"))
         .and(query_param("period", "1h"))
         .and(query_param("limit", "1"))
-        .respond_with(ResponseTemplate::new(200).set_body_json(ok_envelope(
-            serde_json::json!({
+        .respond_with(
+            ResponseTemplate::new(200).set_body_json(ok_envelope(serde_json::json!({
                 "category": "linear",
                 "list": [{
                     "symbol": "BTCUSDT",
@@ -290,8 +291,8 @@ async fn get_long_short_ratio_returns_series() {
                     "sellRatio": "0.45",
                     "timestamp": "1700000000000"
                 }]
-            }),
-        )))
+            }))),
+        )
         .expect(1)
         .mount(&server)
         .await;

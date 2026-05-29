@@ -314,11 +314,7 @@ impl CryptocomRestClient {
     /// `GET /public/get-book` — order book snapshot for `instrument`.
     ///
     /// `depth` is clamped server-side to a supported value (e.g. 10, 50).
-    pub async fn get_orderbook(
-        &self,
-        instrument: &str,
-        depth: u32,
-    ) -> Result<CryptocomOrderBook> {
+    pub async fn get_orderbook(&self, instrument: &str, depth: u32) -> Result<CryptocomOrderBook> {
         let d = depth.to_string();
         let raw: Value = self
             .http
@@ -352,10 +348,7 @@ impl CryptocomRestClient {
             .http
             .get(
                 "/public/get-candlestick",
-                &[
-                    ("instrument_name", instrument),
-                    ("timeframe", timeframe),
-                ],
+                &[("instrument_name", instrument), ("timeframe", timeframe)],
             )
             .await?;
         let list: DataList<CryptocomCandle> = unwrap_cryptocom_envelope(raw)?;
@@ -364,10 +357,7 @@ impl CryptocomRestClient {
 
     /// `GET /public/get-ticker` — 24-hour rolling ticker for one or all
     /// instruments. Pass `None` to fetch every instrument.
-    pub async fn get_ticker(
-        &self,
-        instrument: Option<&str>,
-    ) -> Result<Vec<CryptocomTicker>> {
+    pub async fn get_ticker(&self, instrument: Option<&str>) -> Result<Vec<CryptocomTicker>> {
         let mut params: Vec<(&str, &str)> = Vec::new();
         if let Some(i) = instrument {
             params.push(("instrument_name", i));
@@ -493,7 +483,8 @@ mod tests {
 
     #[test]
     fn trade_renames_letters() {
-        let raw = r#"{"s":"buy","p":"96000.0","q":"0.05","t":1700000000000,"d":"abc","i":"BTC_USDT"}"#;
+        let raw =
+            r#"{"s":"buy","p":"96000.0","q":"0.05","t":1700000000000,"d":"abc","i":"BTC_USDT"}"#;
         let t: CryptocomTrade = serde_json::from_str(raw).expect("deserialize");
         assert_eq!(t.side, "buy");
         assert_eq!(t.price, "96000.0");

@@ -66,7 +66,7 @@ impl StubConnector {
 }
 
 impl ExchangeConnector for StubConnector {
-    fn exchange_name(&self) -> &str {
+    fn exchange_name(&self) -> &'static str {
         "stub"
     }
 
@@ -124,7 +124,7 @@ async fn accept_one(listener: &TcpListener) -> WebSocketStream<TcpStream> {
 }
 
 /// Runner config with zero reconnect delay so tests finish fast.
-fn fast_config(max_reconnect_attempts: u32) -> WsRunnerConfig {
+const fn fast_config(max_reconnect_attempts: u32) -> WsRunnerConfig {
     WsRunnerConfig {
         ping_interval_secs: 60,
         reconnect_delay_secs: 0,
@@ -186,7 +186,7 @@ async fn run_feed_delivers_messages() {
                 }
                 None => break,
             },
-            _ = &mut deadline => panic!("timed out waiting for 3 messages, got {count}"),
+            () = &mut deadline => panic!("timed out waiting for 3 messages, got {count}"),
         }
     }
     assert_eq!(count, 3);
@@ -286,7 +286,7 @@ async fn run_feed_reconnects_on_disconnect() {
     );
 
     sd_tx.send(true).unwrap();
-    tokio::time::timeout(Duration::from_secs(5), feed)
+    let _ = tokio::time::timeout(Duration::from_secs(5), feed)
         .await
         .expect("run_feed did not finish")
         .expect("task panicked");
@@ -337,7 +337,7 @@ async fn run_feed_exhausts_reconnects_returns_error() {
 
 /// Runner config used by every supervised test: zero reconnect delay so the
 /// per-cycle budget is exhausted in milliseconds rather than seconds.
-fn fast_supervised(max_reconnect_attempts: u32, max_refresh_cycles: u32) -> SupervisedConfig {
+const fn fast_supervised(max_reconnect_attempts: u32, max_refresh_cycles: u32) -> SupervisedConfig {
     SupervisedConfig {
         runner: WsRunnerConfig {
             ping_interval_secs: 60,
@@ -685,9 +685,7 @@ async fn supervised_shuts_down_during_refresh() {
         refresh_delay_secs: 10,
     };
 
-    let feed = tokio::spawn(run_feed_supervised(
-        connector, tx, config, sd_rx, refresh,
-    ));
+    let feed = tokio::spawn(run_feed_supervised(connector, tx, config, sd_rx, refresh));
 
     // Once the first cycle exhausts the supervisor enters the refresh
     // delay; fire shutdown well before that 10-second sleep elapses.
@@ -898,7 +896,11 @@ async fn runner_emits_session_ended_and_exhausted_events() {
             _ => None,
         })
         .expect("missing SessionEnded");
-    assert_eq!(first, (0, true), "first SessionEnded should be cascade_start");
+    assert_eq!(
+        first,
+        (0, true),
+        "first SessionEnded should be cascade_start"
+    );
 
     // Final event must be ReconnectsExhausted with the breach attempt count.
     let exhausted = events.iter().rev().find_map(|e| match e {

@@ -138,12 +138,7 @@ async fn get_honours_retry_after_on_429() {
         .await
         .expect("expected eventual success after 429");
 
-    assert_eq!(
-        resp,
-        ServerTime {
-            server_time: 42
-        }
-    );
+    assert_eq!(resp, ServerTime { server_time: 42 });
 }
 
 #[tokio::test]
@@ -159,9 +154,8 @@ async fn get_surfaces_4xx_without_retry() {
         .mount(&server)
         .await;
 
-    let result: Result<serde_json::Value, _> = client(&server.uri())
-        .get("/api/v3/badrequest", &[])
-        .await;
+    let result: Result<serde_json::Value, _> =
+        client(&server.uri()).get("/api/v3/badrequest", &[]).await;
 
     match result {
         Err(ExchangeError::Api { code, message }) => {

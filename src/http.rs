@@ -4,8 +4,8 @@
 //! doesn't require signing — Binance public endpoints, Bybit public
 //! endpoints, and the public-data side of Kraken and Crypto.com all build
 //! on it. The authenticated [`KuCoinClient`](crate::client::KuCoinClient)
-//! shares helper functions defined here ([`percent_encode`],
-//! [`build_query_string`], [`jitter_secs`]) but adds its own signing layer.
+//! shares helper functions defined here (`percent_encode`,
+//! `build_query_string`, `jitter_secs`) but adds its own signing layer.
 //!
 //! Responsibilities:
 //! - reqwest HTTP client with rustls + configurable timeout
@@ -165,17 +165,12 @@ impl PublicRestClient {
     /// response shapes (Binance bare JSON, Bybit `retCode`, etc.).
     ///
     /// Retry policy:
-    /// - Network errors (connect, timeout, DNS) are retried up to
-    ///   [`DEFAULT_RETRIES`] times with jittered exponential backoff.
+    /// - Network errors (connect, timeout, DNS) are retried a few times
+    ///   with jittered exponential backoff.
     /// - HTTP 429 responses honour the `Retry-After` header (seconds form)
-    ///   and are capped at [`MAX_RATE_LIMIT_RETRIES`] before giving up.
-    /// - Other 4xx/5xx responses surface as
-    ///   [`ExchangeError::Api`] without retry.
-    pub async fn get<T: DeserializeOwned>(
-        &self,
-        path: &str,
-        params: &[(&str, &str)],
-    ) -> Result<T> {
+    ///   and are capped before giving up.
+    /// - Other 4xx/5xx responses surface as [`ExchangeError::Api`] without retry.
+    pub async fn get<T: DeserializeOwned>(&self, path: &str, params: &[(&str, &str)]) -> Result<T> {
         let qs = build_query_string(params);
         let url = format!("{}{path}{qs}", self.base_url);
 

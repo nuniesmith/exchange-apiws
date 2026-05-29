@@ -85,8 +85,7 @@ impl CryptocomPrivateClient {
         // Same monotonic-with-floor pattern as KrakenPrivateClient.
         // The .max(0) before the cast guarantees the i64 is non-negative,
         // so the i64↔u64 round-trip preserves value.
-        let now_ms = u64::try_from(chrono::Utc::now().timestamp_millis().max(0))
-            .unwrap_or(0);
+        let now_ms = u64::try_from(chrono::Utc::now().timestamp_millis().max(0)).unwrap_or(0);
         self.nonce_state.fetch_max(now_ms, Ordering::SeqCst);
         let next = self.nonce_state.fetch_add(1, Ordering::SeqCst);
         i64::try_from(next).unwrap_or(i64::MAX)
@@ -95,11 +94,7 @@ impl CryptocomPrivateClient {
     /// Sign and POST a private-API request. `method` is the wire method
     /// name (e.g. `"private/get-account-summary"`); the request `id` and
     /// `nonce` are injected by the client.
-    async fn post<T: serde::de::DeserializeOwned>(
-        &self,
-        method: &str,
-        params: Value,
-    ) -> Result<T> {
+    async fn post<T: serde::de::DeserializeOwned>(&self, method: &str, params: Value) -> Result<T> {
         let id = self.next_id();
         let nonce = self.next_nonce();
         let sig = sign_cryptocom_request(
@@ -160,7 +155,14 @@ impl CryptocomPrivateClient {
         quantity: &str,
         price: Option<&str>,
     ) -> Result<Value> {
-        info!(instrument, side, order_type, quantity, ?price, "Crypto.com place order");
+        info!(
+            instrument,
+            side,
+            order_type,
+            quantity,
+            ?price,
+            "Crypto.com place order"
+        );
         let mut params = json!({
             "instrument_name": instrument,
             "side": side,
@@ -201,16 +203,14 @@ impl CryptocomPrivateClient {
         if let Some(i) = instrument {
             params.insert("instrument_name".into(), Value::String(i.to_string()));
         }
-        self.post("private/get-open-orders", Value::Object(params)).await
+        self.post("private/get-open-orders", Value::Object(params))
+            .await
     }
 
     /// `POST /private/get-order-detail` — full detail for one order ID.
     pub async fn get_order_detail(&self, order_id: &str) -> Result<Value> {
-        self.post(
-            "private/get-order-detail",
-            json!({"order_id": order_id}),
-        )
-        .await
+        self.post("private/get-order-detail", json!({"order_id": order_id}))
+            .await
     }
 
     /// `POST /private/get-trades` — trade history for an instrument (or
@@ -226,11 +226,8 @@ impl CryptocomPrivateClient {
     /// `POST /private/get-deposit-address` — saved deposit addresses for
     /// a currency.
     pub async fn get_deposit_address(&self, currency: &str) -> Result<Value> {
-        self.post(
-            "private/get-deposit-address",
-            json!({"currency": currency}),
-        )
-        .await
+        self.post("private/get-deposit-address", json!({"currency": currency}))
+            .await
     }
 
     /// `POST /private/create-withdrawal` — initiate a withdrawal.
