@@ -15,8 +15,9 @@ pub mod ws;
 
 pub use auth::{KrakenCredentials, form_encode, sign_kraken_request};
 pub use private::{
-    KrakenAddOrderResponse, KrakenCancelResponse, KrakenClosedOrders, KrakenOpenOrders,
-    KrakenOrder, KrakenOrderDescr, KrakenPrivateClient, KrakenWithdrawResponse,
+    KrakenAddOrderResponse, KrakenCancelResponse, KrakenClosedOrders, KrakenLedgerEntry,
+    KrakenLedgers, KrakenOpenOrders, KrakenOrder, KrakenOrderDescr, KrakenPrivateClient,
+    KrakenTradeHistoryEntry, KrakenTradesHistory, KrakenWithdrawResponse, KrakenWithdrawalRecord,
 };
 pub use rest::{
     KrakenAsset, KrakenAssetPair, KrakenOrderBook, KrakenRestClient, KrakenSystemStatus,
