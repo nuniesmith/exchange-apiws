@@ -165,6 +165,11 @@ nursery  = { level = "warn", priority = -1 }
 missing_errors_doc  = "allow"
 missing_panics_doc  = "allow"
 
+# New in clippy 1.96 — suggests Duration::from_mins / from_hours, which were
+# stabilised AFTER this crate's declared rust-version (1.94.1). Taking the
+# suggestion would break the MSRV build, so keep the explicit-unit form.
+duration_suboptimal_units = "allow"
+
 # `KuCoinClient::get`, `KuCoinClient::post` etc. — repetition is intentional.
 module_name_repetitions = "allow"
 
