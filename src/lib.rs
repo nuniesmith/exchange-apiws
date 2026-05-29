@@ -86,7 +86,8 @@
 //! ├── client   — KuCoinClient (KuCoin-signed HTTP), Credentials
 //! ├── http     — PublicRestClient (unauthenticated HTTP); shared helpers
 //! ├── error    — ExchangeError, Result
-//! └── types    — Candle, Side, OrderType, TimeInForce, STP
+//! ├── types    — Candle, Side, OrderType, TimeInForce, STP
+//! └── prelude  — curated glob-import: `use exchange_apiws::prelude::*;`
 //! ```
 
 // ── Always-on modules (KuCoin + shared runtime) ───────────────────────────────
@@ -136,3 +137,69 @@ pub use ws::{
     EventListener, KucoinConnector, RunnerEvent, SupervisedConfig, WsFeedEndpoint, WsOrderAck,
     WsOrderClient, WsRunnerConfig, run_feed, run_feed_supervised,
 };
+
+// ── Prelude ────────────────────────────────────────────────────────────────────
+
+/// Curated glob-import surface for the common case.
+///
+/// `use exchange_apiws::prelude::*;` brings the error types, the unified
+/// data model ([`DataMessage`](crate::actors::DataMessage) and the
+/// [`ExchangeConnector`](crate::actors::ExchangeConnector) trait), the WS
+/// runner entry points, and every enabled exchange's client + connector
+/// into scope at once — so feed and trading code doesn't have to reach
+/// into the per-module paths.
+///
+/// Per-exchange items follow the same Cargo features as the crate root
+/// (`binance`, `bybit`, `kraken`, `cryptocom`), so the prelude only
+/// surfaces what you've enabled.
+///
+/// ```
+/// use exchange_apiws::prelude::*;
+///
+/// fn handle(msg: DataMessage) -> Result<()> {
+///     if let DataMessage::Trade(t) = msg {
+///         let _ = (t.exchange, t.symbol, t.price);
+///     }
+///     Ok(())
+/// }
+/// ```
+pub mod prelude {
+    // Errors.
+    pub use crate::error::{ExchangeError, Result};
+
+    // Unified data model + connector trait.
+    pub use crate::actors::{
+        AdvancedOrderUpdate, BalanceUpdate, CandleData, DataMessage, ExchangeConnector,
+        FundingData, InstrumentEvent, OrderBookData, OrderUpdate, PositionChange, TickerData,
+        TradeData, TradeSide, WebSocketConfig,
+    };
+
+    // WS runner + supervised feed + observability.
+    pub use crate::ws::{
+        EventListener, RunnerEvent, SupervisedConfig, WsFeedEndpoint, WsRunnerConfig, run_feed,
+        run_feed_supervised,
+    };
+
+    // Shared HTTP + common order/value types.
+    pub use crate::http::PublicRestClient;
+    pub use crate::types::{Candle, OrderType, STP, Side, TimeInForce};
+
+    // KuCoin (always on).
+    pub use crate::client::{Credentials, KuCoinClient};
+    pub use crate::connectors::{ExchangeConfig, KuCoin, KucoinEnv};
+    pub use crate::ws::{KucoinConnector, WsOrderAck, WsOrderClient};
+
+    // Per-exchange clients + connectors (feature-gated).
+    #[cfg(feature = "binance")]
+    pub use crate::binance::{BinanceConnector, BinanceRestClient};
+    #[cfg(feature = "bybit")]
+    pub use crate::bybit::{BybitCategory, BybitConnector, BybitRestClient};
+    #[cfg(feature = "cryptocom")]
+    pub use crate::cryptocom::{
+        CryptocomConnector, CryptocomCredentials, CryptocomPrivateClient, CryptocomRestClient,
+    };
+    #[cfg(feature = "kraken")]
+    pub use crate::kraken::{
+        KrakenConnector, KrakenCredentials, KrakenPrivateClient, KrakenRestClient,
+    };
+}
