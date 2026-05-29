@@ -132,6 +132,124 @@ pub struct KrakenWithdrawResponse {
     pub refid: String,
 }
 
+/// One trade from `POST /0/private/TradesHistory`.
+///
+/// Numeric fields are kept as the raw Kraken string shape to preserve
+/// precision (matching [`KrakenOrder`]); parse with `.parse::<f64>()` at
+/// the call site if you need arithmetic.
+#[derive(Debug, Clone, Deserialize)]
+pub struct KrakenTradeHistoryEntry {
+    /// Order transaction ID that produced this trade.
+    pub ordertxid: String,
+    /// Position transaction ID (empty when not part of a margin position).
+    #[serde(default)]
+    pub postxid: String,
+    /// Trading pair (e.g. `"XXBTZUSD"`).
+    pub pair: String,
+    /// Unix timestamp of the trade (seconds, fractional).
+    pub time: f64,
+    /// `"buy"` or `"sell"`.
+    #[serde(rename = "type")]
+    pub side: String,
+    /// `"limit"`, `"market"`, `"stop-loss"`, …
+    pub ordertype: String,
+    /// Execution price (quote currency).
+    pub price: String,
+    /// Total cost (price × volume, quote currency).
+    pub cost: String,
+    /// Fee charged for the trade.
+    pub fee: String,
+    /// Volume executed in base asset.
+    pub vol: String,
+    /// Initial margin posted (empty for non-margin trades).
+    #[serde(default)]
+    pub margin: String,
+    /// Miscellaneous comma-separated flags.
+    #[serde(default)]
+    pub misc: String,
+}
+
+/// Response from `POST /0/private/TradesHistory`.
+///
+/// Kraken keys each trade by its trade ID inside a `trades` map and
+/// reports the total across all pages in `count`.
+#[derive(Debug, Clone, Deserialize)]
+pub struct KrakenTradesHistory {
+    /// Trades keyed by trade ID (e.g. `"TZ5X4A-..."`).
+    #[serde(default)]
+    pub trades: HashMap<String, KrakenTradeHistoryEntry>,
+    /// Total trade count across all pages.
+    #[serde(default)]
+    pub count: u64,
+}
+
+/// One ledger entry from `POST /0/private/Ledgers`.
+#[derive(Debug, Clone, Deserialize)]
+pub struct KrakenLedgerEntry {
+    /// Reference ID linking related ledger entries (e.g. both sides of a trade).
+    pub refid: String,
+    /// Unix timestamp of the entry (seconds, fractional).
+    pub time: f64,
+    /// Entry type — `"trade"`, `"deposit"`, `"withdrawal"`, `"transfer"`, …
+    #[serde(rename = "type")]
+    pub entry_type: String,
+    /// Entry subtype (often empty).
+    #[serde(default)]
+    pub subtype: String,
+    /// Asset class — typically `"currency"`.
+    pub aclass: String,
+    /// Asset code (e.g. `"ZUSD"`, `"XXBT"`).
+    pub asset: String,
+    /// Signed amount (negative = debit).
+    pub amount: String,
+    /// Fee charged for the operation.
+    pub fee: String,
+    /// Resulting running balance for the asset.
+    pub balance: String,
+}
+
+/// Response from `POST /0/private/Ledgers`.
+#[derive(Debug, Clone, Deserialize)]
+pub struct KrakenLedgers {
+    /// Ledger entries keyed by ledger ID (e.g. `"LXXX..."`).
+    #[serde(default)]
+    pub ledger: HashMap<String, KrakenLedgerEntry>,
+    /// Total ledger-entry count across all pages.
+    #[serde(default)]
+    pub count: u64,
+}
+
+/// One withdrawal record from `POST /0/private/WithdrawStatus`.
+#[derive(Debug, Clone, Deserialize)]
+pub struct KrakenWithdrawalRecord {
+    /// Withdrawal method (e.g. `"Bitcoin"`).
+    #[serde(default)]
+    pub method: String,
+    /// Asset class — typically `"currency"`.
+    #[serde(default)]
+    pub aclass: String,
+    /// Asset code being withdrawn.
+    pub asset: String,
+    /// Reference ID (matches the one returned by [`KrakenWithdrawResponse`]).
+    pub refid: String,
+    /// On-chain transaction ID once broadcast (absent while pending).
+    #[serde(default)]
+    pub txid: Option<String>,
+    /// Free-form info field (often the destination address).
+    #[serde(default)]
+    pub info: String,
+    /// Withdrawal amount (asset units).
+    pub amount: String,
+    /// Fee charged for the withdrawal.
+    #[serde(default)]
+    pub fee: String,
+    /// Unix timestamp the withdrawal was requested (seconds).
+    pub time: f64,
+    /// Status — `"Initial"`, `"Pending"`, `"Settled"`, `"Success"`,
+    /// `"Failure"`, …
+    pub status: String,
+}
+
 // ── Client ───────────────────────────────────────────────────────────────────
 
 /// Authenticated Kraken REST client.
@@ -286,22 +404,15 @@ impl KrakenPrivateClient {
         self.post("/0/private/CancelAll", &[]).await
     }
 
-    /// `POST /0/private/TradesHistory` — trade history (paginated).
-    ///
-    /// Returns raw [`serde_json::Value`] — the response wraps a
-    /// `trades` map plus a `count`, and the per-trade shape has many
-    /// fields. Deserialize a tailored type with
-    /// [`serde_json::from_value`] if you need typed access.
-    pub async fn get_trades_history(&self) -> Result<Value> {
+    /// `POST /0/private/TradesHistory` — trade history (paginated;
+    /// surfaces the first page).
+    pub async fn get_trades_history(&self) -> Result<KrakenTradesHistory> {
         self.post("/0/private/TradesHistory", &[]).await
     }
 
-    /// `POST /0/private/Ledgers` — ledger entries for an asset.
-    ///
-    /// Returns raw [`serde_json::Value`]. Per-entry shape includes
-    /// `refid`, `time`, `type`, `aclass`, `asset`, `amount`, `fee`,
-    /// `balance`.
-    pub async fn get_ledger(&self, asset: &str) -> Result<Value> {
+    /// `POST /0/private/Ledgers` — ledger entries for an asset
+    /// (paginated; surfaces the first page).
+    pub async fn get_ledger(&self, asset: &str) -> Result<KrakenLedgers> {
         self.post("/0/private/Ledgers", &[("asset", asset)]).await
     }
 
@@ -327,8 +438,12 @@ impl KrakenPrivateClient {
 
     /// `POST /0/private/WithdrawStatus` — recent withdrawals for an asset.
     ///
-    /// Returns raw [`serde_json::Value`] (array of withdrawal records).
-    pub async fn get_withdrawal_status(&self, asset: &str) -> Result<Value> {
+    /// Kraken returns the records as a JSON array; this deserialises into a
+    /// `Vec<KrakenWithdrawalRecord>`.
+    pub async fn get_withdrawal_status(
+        &self,
+        asset: &str,
+    ) -> Result<Vec<KrakenWithdrawalRecord>> {
         self.post("/0/private/WithdrawStatus", &[("asset", asset)])
             .await
     }
@@ -403,5 +518,101 @@ mod tests {
         let raw = r#"{"count": 3}"#;
         let r: KrakenCancelResponse = serde_json::from_str(raw).expect("deserialize");
         assert_eq!(r.count, 3);
+    }
+
+    #[test]
+    fn trades_history_deserializes_keyed_map() {
+        let raw = r#"{
+            "trades": {
+                "TZ5X4A-ABCDE-FGHIJK": {
+                    "ordertxid": "OQCLML-BW3P3-BUCMWZ",
+                    "postxid": "",
+                    "pair": "XXBTZUSD",
+                    "time": 1700000000.1234,
+                    "type": "buy",
+                    "ordertype": "limit",
+                    "price": "30000.0",
+                    "cost": "30000.0",
+                    "fee": "48.0",
+                    "vol": "1.0",
+                    "margin": "0.0",
+                    "misc": ""
+                }
+            },
+            "count": 1
+        }"#;
+        let h: KrakenTradesHistory = serde_json::from_str(raw).expect("deserialize");
+        assert_eq!(h.count, 1);
+        let t = &h.trades["TZ5X4A-ABCDE-FGHIJK"];
+        assert_eq!(t.pair, "XXBTZUSD");
+        assert_eq!(t.side, "buy");
+        assert_eq!(t.ordertxid, "OQCLML-BW3P3-BUCMWZ");
+        assert!((t.time - 1_700_000_000.123_4).abs() < 1e-6);
+    }
+
+    #[test]
+    fn ledgers_deserialize_keyed_map() {
+        let raw = r#"{
+            "ledger": {
+                "L4UESK-KG3EQ-UFO4T5": {
+                    "refid": "TY5BYV-WLD5M-ABCDEF",
+                    "time": 1700000000.0,
+                    "type": "trade",
+                    "subtype": "",
+                    "aclass": "currency",
+                    "asset": "ZUSD",
+                    "amount": "-30000.0",
+                    "fee": "48.0",
+                    "balance": "12345.6"
+                }
+            },
+            "count": 1
+        }"#;
+        let l: KrakenLedgers = serde_json::from_str(raw).expect("deserialize");
+        assert_eq!(l.count, 1);
+        let e = &l.ledger["L4UESK-KG3EQ-UFO4T5"];
+        assert_eq!(e.entry_type, "trade");
+        assert_eq!(e.asset, "ZUSD");
+        assert_eq!(e.amount, "-30000.0");
+    }
+
+    #[test]
+    fn withdrawal_record_handles_pending_without_txid() {
+        // A pending withdrawal has no on-chain txid yet.
+        let raw = r#"{
+            "method": "Bitcoin",
+            "aclass": "currency",
+            "asset": "XXBT",
+            "refid": "FTQcuak-V6Za8qrPnhsw47JfVff",
+            "info": "bc1qexample",
+            "amount": "0.05",
+            "fee": "0.00015",
+            "time": 1700000000.0,
+            "status": "Pending"
+        }"#;
+        let w: KrakenWithdrawalRecord = serde_json::from_str(raw).expect("deserialize");
+        assert_eq!(w.asset, "XXBT");
+        assert_eq!(w.status, "Pending");
+        assert!(w.txid.is_none());
+        assert_eq!(w.amount, "0.05");
+    }
+
+    #[test]
+    fn withdrawal_record_with_settled_txid() {
+        let raw = r#"{
+            "method": "Bitcoin",
+            "aclass": "currency",
+            "asset": "XXBT",
+            "refid": "FTQcuak-V6Za8qrPnhsw47JfVff",
+            "txid": "deadbeef...",
+            "info": "bc1qexample",
+            "amount": "0.05",
+            "fee": "0.00015",
+            "time": 1700000000.0,
+            "status": "Success"
+        }"#;
+        let w: KrakenWithdrawalRecord = serde_json::from_str(raw).expect("deserialize");
+        assert_eq!(w.txid.as_deref(), Some("deadbeef..."));
+        assert_eq!(w.status, "Success");
     }
 }

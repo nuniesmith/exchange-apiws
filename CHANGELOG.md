@@ -8,6 +8,29 @@ and the project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.
 
 — nothing yet —
 
+## [0.3.0] – 2026-05-28
+
+### Added
+
+- Typed Kraken private-endpoint responses: `KrakenTradesHistory` +
+  `KrakenTradeHistoryEntry`, `KrakenLedgers` + `KrakenLedgerEntry`, and
+  `KrakenWithdrawalRecord`. All re-exported from `kraken`.
+
+### Changed (BREAKING)
+
+- Three `KrakenPrivateClient` methods now return typed structs instead
+  of `serde_json::Value`:
+  - `get_trades_history() -> KrakenTradesHistory` (was `Value`)
+  - `get_ledger(asset) -> KrakenLedgers` (was `Value`)
+  - `get_withdrawal_status(asset) -> Vec<KrakenWithdrawalRecord>` (was `Value`)
+
+  Callers that indexed into the `Value` (`v["count"]`,
+  `v["trades"][id][…]`) should switch to the struct fields
+  (`h.count`, `h.trades[id].pair`, …). Numeric fields stay as `String`
+  to preserve Kraken's wire precision, matching the existing
+  `KrakenOrder` convention. Minor-version bump per pre-1.0 semver
+  (breaking changes bump the minor while < 1.0).
+
 ## [0.2.20] – 2026-05-28
 
 ### Changed
@@ -303,7 +326,8 @@ Initial KuCoin Futures REST + WebSocket implementation, including:
 - Bullet-public / bullet-private WS token negotiation
 - 100 msg / 10 s sliding-window outbound rate limit
 
-[Unreleased]: https://github.com/nuniesmith/exchange-apiws/compare/v0.2.20...HEAD
+[Unreleased]: https://github.com/nuniesmith/exchange-apiws/compare/v0.3.0...HEAD
+[0.3.0]: https://github.com/nuniesmith/exchange-apiws/compare/v0.2.20...v0.3.0
 [0.2.20]: https://github.com/nuniesmith/exchange-apiws/compare/v0.2.19...v0.2.20
 [0.2.19]: https://github.com/nuniesmith/exchange-apiws/compare/v0.2.18...v0.2.19
 [0.2.18]: https://github.com/nuniesmith/exchange-apiws/compare/v0.2.17...v0.2.18

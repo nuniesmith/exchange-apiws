@@ -16,10 +16,10 @@
 //! | `place_order_returns_txid` | `/0/private/AddOrder` |
 //! | `cancel_order_returns_count` | `/0/private/CancelOrder` |
 //! | `cancel_all_orders_returns_count` | `/0/private/CancelAll` |
-//! | `get_trades_history_returns_raw_value` | `/0/private/TradesHistory` |
-//! | `get_ledger_returns_raw_value` | `/0/private/Ledgers` |
+//! | `get_trades_history_returns_typed` | `/0/private/TradesHistory` |
+//! | `get_ledger_returns_typed` | `/0/private/Ledgers` |
 //! | `withdraw_returns_refid` | `/0/private/Withdraw` |
-//! | `get_withdrawal_status_returns_raw_value` | `/0/private/WithdrawStatus` |
+//! | `get_withdrawal_status_returns_typed` | `/0/private/WithdrawStatus` |
 //! | `error_envelope_surfaces_as_api_error` | error propagation |
 //!
 //! Run with:
@@ -204,13 +204,18 @@ async fn cancel_all_orders_returns_count() {
 }
 
 #[tokio::test]
-async fn get_trades_history_returns_raw_value() {
+async fn get_trades_history_returns_typed() {
     let server = MockServer::start().await;
     Mock::given(method("POST"))
         .and(path("/0/private/TradesHistory"))
         .respond_with(ResponseTemplate::new(200).set_body_json(ok_envelope(serde_json::json!({
             "trades": {
-                "T1": {"pair":"XBTUSD","time":1_700_000_000.0,"type":"buy","cost":"30000","vol":"1.0"}
+                "T1": {
+                    "ordertxid":"O1","postxid":"","pair":"XXBTZUSD",
+                    "time":1_700_000_000.0,"type":"buy","ordertype":"limit",
+                    "price":"30000","cost":"30000","fee":"48","vol":"1.0",
+                    "margin":"0.0","misc":""
+                }
             },
             "count": 1
         }))))
@@ -218,23 +223,29 @@ async fn get_trades_history_returns_raw_value() {
         .mount(&server)
         .await;
 
-    let v = sim_client(&server)
+    let h = sim_client(&server)
         .get_trades_history()
         .await
         .expect("trades history");
-    assert_eq!(v["count"], 1);
-    assert_eq!(v["trades"]["T1"]["pair"], "XBTUSD");
+    assert_eq!(h.count, 1);
+    let t = &h.trades["T1"];
+    assert_eq!(t.pair, "XXBTZUSD");
+    assert_eq!(t.side, "buy");
+    assert_eq!(t.ordertxid, "O1");
 }
 
 #[tokio::test]
-async fn get_ledger_returns_raw_value() {
+async fn get_ledger_returns_typed() {
     let server = MockServer::start().await;
     Mock::given(method("POST"))
         .and(path("/0/private/Ledgers"))
         .and(body_string_contains("asset=XBT"))
         .respond_with(ResponseTemplate::new(200).set_body_json(ok_envelope(serde_json::json!({
             "ledger": {
-                "L1": {"refid":"R1","time":1_700_000_000.0,"type":"trade","asset":"XXBT","amount":"0.1","fee":"0.0","balance":"0.5"}
+                "L1": {
+                    "refid":"R1","time":1_700_000_000.0,"type":"trade","subtype":"",
+                    "aclass":"currency","asset":"XXBT","amount":"0.1","fee":"0.0","balance":"0.5"
+                }
             },
             "count": 1
         }))))
@@ -242,11 +253,14 @@ async fn get_ledger_returns_raw_value() {
         .mount(&server)
         .await;
 
-    let v = sim_client(&server)
+    let l = sim_client(&server)
         .get_ledger("XBT")
         .await
         .expect("ledger");
-    assert_eq!(v["count"], 1);
+    assert_eq!(l.count, 1);
+    let e = &l.ledger["L1"];
+    assert_eq!(e.entry_type, "trade");
+    assert_eq!(e.asset, "XXBT");
 }
 
 #[tokio::test]
@@ -272,7 +286,7 @@ async fn withdraw_returns_refid() {
 }
 
 #[tokio::test]
-async fn get_withdrawal_status_returns_raw_value() {
+async fn get_withdrawal_status_returns_typed() {
     let server = MockServer::start().await;
     Mock::given(method("POST"))
         .and(path("/0/private/WithdrawStatus"))
@@ -283,11 +297,14 @@ async fn get_withdrawal_status_returns_raw_value() {
         .mount(&server)
         .await;
 
-    let v = sim_client(&server)
+    let records = sim_client(&server)
         .get_withdrawal_status("XBT")
         .await
         .expect("withdraw status");
-    assert_eq!(v[0]["status"], "Settled");
+    assert_eq!(records.len(), 1);
+    assert_eq!(records[0].status, "Settled");
+    assert_eq!(records[0].asset, "XXBT");
+    assert_eq!(records[0].refid, "FT5Z3X");
 }
 
 #[tokio::test]
