@@ -217,13 +217,13 @@ impl ExchangeConnector for BinanceConnector {
 
         // Combined-stream wrapper: `{"stream":"btcusdt@aggTrade","data":{...}}`.
         // Unwrap to the inner event for routing.
-        let (stream_name, inner) =
-            if let Some(stream) = json.get("stream").and_then(|v| v.as_str()) {
-                let data = json.get("data").cloned().unwrap_or(Value::Null);
-                (Some(stream.to_string()), data)
-            } else {
-                (None, json)
-            };
+        let (stream_name, inner) = if let Some(stream) = json.get("stream").and_then(|v| v.as_str())
+        {
+            let data = json.get("data").cloned().unwrap_or(Value::Null);
+            (Some(stream.to_string()), data)
+        } else {
+            (None, json)
+        };
 
         // Most Binance events identify themselves via the "e" field. The two
         // that don't are bookTicker and the partial-depth snapshot — both
@@ -237,9 +237,7 @@ impl ExchangeConnector for BinanceConnector {
             "depthUpdate" => Ok(parse_depth_update(self.exchange, &inner)),
             "" => {
                 // bookTicker has `u`, `s`, `b`, `B`, `a`, `A` (no `e`).
-                if inner.get("u").is_some()
-                    && inner.get("s").is_some()
-                    && inner.get("b").is_some()
+                if inner.get("u").is_some() && inner.get("s").is_some() && inner.get("b").is_some()
                 {
                     Ok(parse_book_ticker(self.exchange, &inner))
                 } else if inner.get("lastUpdateId").is_some() {
@@ -586,7 +584,10 @@ mod tests {
     fn unknown_event_returns_empty_vec() {
         let raw = r#"{"e": "someFutureEvent", "s": "BTCUSDT"}"#;
         let msgs = connector().parse_message(raw).expect("parse");
-        assert!(msgs.is_empty(), "unknown event should yield no DataMessages");
+        assert!(
+            msgs.is_empty(),
+            "unknown event should yield no DataMessages"
+        );
     }
 
     #[test]
@@ -619,13 +620,18 @@ mod tests {
         assert!(BinanceConnector::depth_snapshot_stream("BTCUSDT", 5).ends_with("@depth5@100ms"));
         assert!(BinanceConnector::depth_snapshot_stream("BTCUSDT", 8).ends_with("@depth10@100ms"));
         assert!(BinanceConnector::depth_snapshot_stream("BTCUSDT", 20).ends_with("@depth20@100ms"));
-        assert!(BinanceConnector::depth_snapshot_stream("BTCUSDT", 100).ends_with("@depth20@100ms"));
+        assert!(
+            BinanceConnector::depth_snapshot_stream("BTCUSDT", 100).ends_with("@depth20@100ms")
+        );
     }
 
     #[test]
     fn spot_url_combines_streams() {
         let c = BinanceConnector::spot(&["btcusdt@aggTrade", "btcusdt@bookTicker"]);
-        assert!(c.url.starts_with("wss://stream.binance.com:9443/stream?streams="));
+        assert!(
+            c.url
+                .starts_with("wss://stream.binance.com:9443/stream?streams=")
+        );
         assert!(c.url.contains("btcusdt@aggTrade"));
         assert!(c.url.contains("btcusdt@bookTicker"));
         assert_eq!(c.exchange, "binance");
@@ -634,7 +640,10 @@ mod tests {
     #[test]
     fn futures_url_uses_fstream_host() {
         let c = BinanceConnector::futures(&["btcusdt@markPrice@1s"]);
-        assert!(c.url.starts_with("wss://fstream.binance.com/stream?streams="));
+        assert!(
+            c.url
+                .starts_with("wss://fstream.binance.com/stream?streams=")
+        );
         assert_eq!(c.exchange, "binance-futures");
     }
 }

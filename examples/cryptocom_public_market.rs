@@ -32,9 +32,7 @@ async fn main() -> exchange_apiws::Result<()> {
     }
 
     // get_valuations returns a time-series; the last entry is the latest.
-    let marks = client
-        .get_valuations("BTCUSD-PERP", "mark_price")
-        .await?;
+    let marks = client.get_valuations("BTCUSD-PERP", "mark_price").await?;
     if let Some(latest) = marks.last() {
         let ts = chrono::DateTime::from_timestamp_millis(latest.timestamp)
             .map_or_else(|| latest.timestamp.to_string(), |d| d.to_rfc3339());

@@ -8,6 +8,36 @@ and the project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.
 
 — nothing yet —
 
+## [0.3.2] – 2026-05-29
+
+### Added
+
+- **GitHub Actions CI** (`.github/workflows/ci.yml`) gating every push
+  and PR on: `cargo fmt --check`; `cargo clippy -D warnings` for both
+  `--all-features` and `--no-default-features`; a `cargo test` matrix
+  over default / all-features / no-default-features; `cargo doc` with
+  `RUSTDOCFLAGS=-D warnings` (broken intra-doc links can no longer reach
+  docs.rs); and an MSRV `cargo check` on the declared `rust-version`
+  (1.94.1). Excluded from the published crate via the existing
+  `/.github` package exclude.
+
+### Fixed
+
+- **Clean lint/fmt/doc baseline** so the new CI gate passes from day one:
+  - `cargo fmt` applied across the crate (formatting only).
+  - Cleared all outstanding `clippy` warnings under `all`, `pedantic`,
+    and `nursery` (const-fn candidates, `!=`→`==` flips, implicit
+    clones, unreadable literals, `f64` strict-eq in a test, an unused
+    import, an unused `Result`).
+  - Fixed broken / private / redundant rustdoc intra-doc links
+    surfaced by `-D warnings` (links to now-private retry constants and
+    helpers, unresolved `ExchangeError::Config` / `PublicRestClient` /
+    `response_for` / field references, and two redundant explicit link
+    targets).
+  - Feature-gated integration-test files (`tests/<exchange>_*`) now
+    carry `#![allow(missing_docs)]` before their `#![cfg(feature)]` so
+    the empty-crate-doc lint doesn't fire when a feature is disabled.
+
 ## [0.3.1] – 2026-05-29
 
 ### Added
@@ -338,7 +368,8 @@ Initial KuCoin Futures REST + WebSocket implementation, including:
 - Bullet-public / bullet-private WS token negotiation
 - 100 msg / 10 s sliding-window outbound rate limit
 
-[Unreleased]: https://github.com/nuniesmith/exchange-apiws/compare/v0.3.1...HEAD
+[Unreleased]: https://github.com/nuniesmith/exchange-apiws/compare/v0.3.2...HEAD
+[0.3.2]: https://github.com/nuniesmith/exchange-apiws/compare/v0.3.1...v0.3.2
 [0.3.1]: https://github.com/nuniesmith/exchange-apiws/compare/v0.3.0...v0.3.1
 [0.3.0]: https://github.com/nuniesmith/exchange-apiws/compare/v0.2.20...v0.3.0
 [0.2.20]: https://github.com/nuniesmith/exchange-apiws/compare/v0.2.19...v0.2.20

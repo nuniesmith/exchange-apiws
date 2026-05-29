@@ -1,3 +1,4 @@
+#![allow(missing_docs)] // empty crate when feature off; no-op when on
 #![cfg(feature = "bybit")]
 
 //! Bybit WS integration test via a local `tokio-tungstenite` server.
@@ -123,7 +124,11 @@ async fn run_feed_subscribes_pings_and_delivers_all_variants() {
         BybitConnector::kline_topic("BTCUSDT", "1"),
         BybitConnector::orderbook_topic("BTCUSDT", 50),
     ];
-    let connector = Arc::new(BybitConnector::with_url(&url, BybitCategory::Linear, topics));
+    let connector = Arc::new(BybitConnector::with_url(
+        &url,
+        BybitCategory::Linear,
+        topics,
+    ));
     let sub = connector
         .subscription_message("")
         .expect("subscription message");
@@ -207,5 +212,8 @@ async fn run_feed_subscribes_pings_and_delivers_all_variants() {
     assert!(kinds.contains(&"orderbook"), "missing orderbook: {kinds:?}");
     // publicTrade carried two trades — make sure we got both.
     let trade_count = kinds.iter().filter(|k| **k == "trade").count();
-    assert_eq!(trade_count, 2, "expected 2 trades from the batch: {kinds:?}");
+    assert_eq!(
+        trade_count, 2,
+        "expected 2 trades from the batch: {kinds:?}"
+    );
 }

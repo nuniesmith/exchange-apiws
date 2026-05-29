@@ -120,7 +120,7 @@ pub struct KuCoin {
 
 impl KuCoin {
     /// Create a connector targeting the KuCoin **Futures** exchange.
-    pub fn futures(creds: Credentials) -> Self {
+    pub const fn futures(creds: Credentials) -> Self {
         Self {
             creds,
             env: KucoinEnv::LiveFutures,
@@ -128,7 +128,7 @@ impl KuCoin {
     }
 
     /// Create a connector targeting the KuCoin **Spot** exchange.
-    pub fn spot(creds: Credentials) -> Self {
+    pub const fn spot(creds: Credentials) -> Self {
         Self {
             creds,
             env: KucoinEnv::LiveSpot,
@@ -136,7 +136,7 @@ impl KuCoin {
     }
 
     /// Create a connector targeting the KuCoin **Unified Trade Account**.
-    pub fn unified(creds: Credentials) -> Self {
+    pub const fn unified(creds: Credentials) -> Self {
         Self {
             creds,
             env: KucoinEnv::Unified,
@@ -144,7 +144,7 @@ impl KuCoin {
     }
 
     /// Create a connector from explicit credentials and environment.
-    pub fn new(creds: Credentials, env: KucoinEnv) -> Self {
+    pub const fn new(creds: Credentials, env: KucoinEnv) -> Self {
         Self { creds, env }
     }
 
@@ -166,7 +166,7 @@ impl KuCoin {
     /// # Ok(())
     /// # }
     /// ```
-    pub fn env(&self) -> KucoinEnv {
+    pub const fn env(&self) -> KucoinEnv {
         self.env
     }
 
@@ -176,8 +176,9 @@ impl KuCoin {
     /// cheaply into tasks that need independent lifetimes.
     ///
     /// # Errors
-    /// Returns [`ExchangeError::Config`] if the underlying HTTP client cannot
-    /// be initialised (e.g. TLS failure). This is extremely rare in practice.
+    /// Returns [`ExchangeError::Config`](crate::error::ExchangeError::Config)
+    /// if the underlying HTTP client cannot be initialised (e.g. TLS
+    /// failure). This is extremely rare in practice.
     pub fn rest_client(&self) -> crate::error::Result<KuCoinClient> {
         KuCoinClient::with_base_url(self.creds.clone(), self.env.rest_base())
     }

@@ -1,3 +1,4 @@
+#![allow(missing_docs)] // empty crate when feature off; no-op when on
 #![cfg(feature = "cryptocom")]
 
 //! `CryptocomPrivateClient` integration tests via `wiremock`.
@@ -29,8 +30,8 @@
 //! cargo test --test cryptocom_private_mock
 //! ```
 
-use exchange_apiws::{CryptocomCredentials, CryptocomPrivateClient, ExchangeError};
 use exchange_apiws::cryptocom::sign_cryptocom_request;
+use exchange_apiws::{CryptocomCredentials, CryptocomPrivateClient, ExchangeError};
 use serde_json::{Value, json};
 use wiremock::matchers::{body_partial_json, method, path};
 use wiremock::{Mock, MockServer, ResponseTemplate};
@@ -266,7 +267,12 @@ async fn get_deposit_address_returns_value() {
         .get_deposit_address("BTC")
         .await
         .expect("deposit address");
-    assert!(v["deposit_address_list"][0]["address"].as_str().unwrap().starts_with("bc1q"));
+    assert!(
+        v["deposit_address_list"][0]["address"]
+            .as_str()
+            .unwrap()
+            .starts_with("bc1q")
+    );
 }
 
 #[tokio::test]

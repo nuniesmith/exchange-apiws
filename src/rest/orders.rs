@@ -69,7 +69,7 @@ impl OrderDetail {
     /// An order is considered filled when its `filled_size` equals `size`
     /// (all contracts matched) regardless of the `status` string.
     pub fn is_filled(&self) -> bool {
-        self.filled_size.map_or(false, |f| f >= self.size)
+        self.filled_size.is_some_and(|f| f >= self.size)
     }
 }
 

@@ -268,9 +268,7 @@ impl WsOrderClient {
 
     async fn send_and_await(&self, client_oid: &str, frame: String) -> Result<WsOrderAck> {
         if self.is_closed() {
-            return Err(ExchangeError::Order(
-                "WS-order connection is closed".into(),
-            ));
+            return Err(ExchangeError::Order("WS-order connection is closed".into()));
         }
 
         let (tx, rx) = oneshot::channel();
@@ -465,7 +463,10 @@ mod tests {
             None,
         );
         let v: Value = serde_json::from_str(&frame).unwrap();
-        assert!(v["data"].get("price").is_none(), "market orders must not include a price");
+        assert!(
+            v["data"].get("price").is_none(),
+            "market orders must not include a price"
+        );
         assert_eq!(v["data"]["type"], "market");
     }
 

@@ -582,30 +582,30 @@ fn parse_instrument_event(
         .unwrap_or_else(|| chrono::Utc::now().timestamp_millis());
 
     // Fields present depend on the subject.  Parse all opportunistically.
-    let mark_price = if str_f64(data, "markPrice") != 0.0 {
+    let mark_price = if str_f64(data, "markPrice") == 0.0 {
+        None
+    } else {
         Some(str_f64(data, "markPrice"))
-    } else {
-        None
     };
-    let index_price = if str_f64(data, "indexPrice") != 0.0 {
+    let index_price = if str_f64(data, "indexPrice") == 0.0 {
+        None
+    } else {
         Some(str_f64(data, "indexPrice"))
-    } else {
-        None
     };
-    let funding_rate = if str_f64(data, "fundingRate") != 0.0 {
+    let funding_rate = if str_f64(data, "fundingRate") == 0.0 {
+        None
+    } else {
         Some(str_f64(data, "fundingRate"))
-    } else {
-        None
     };
-    let predicted_funding_rate = if str_f64(data, "predictedValue") != 0.0 {
+    let predicted_funding_rate = if str_f64(data, "predictedValue") == 0.0 {
+        None
+    } else {
         Some(str_f64(data, "predictedValue"))
-    } else {
-        None
     };
-    let premium_index = if str_f64(data, "premiumIndex") != 0.0 {
-        Some(str_f64(data, "premiumIndex"))
-    } else {
+    let premium_index = if str_f64(data, "premiumIndex") == 0.0 {
         None
+    } else {
+        Some(str_f64(data, "premiumIndex"))
     };
 
     vec![DataMessage::InstrumentEvent(InstrumentEvent {
@@ -637,11 +637,11 @@ fn parse_advanced_order_update(exchange: &str, data: &Value) -> Vec<DataMessage>
 
     let stop_price = {
         let v = str_f64(data, "stopPrice");
-        if v != 0.0 { Some(v) } else { None }
+        if v == 0.0 { None } else { Some(v) }
     };
     let price = {
         let v = str_f64(data, "price");
-        if v != 0.0 { Some(v) } else { None }
+        if v == 0.0 { None } else { Some(v) }
     };
 
     vec![DataMessage::AdvancedOrderUpdate(AdvancedOrderUpdate {

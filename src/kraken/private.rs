@@ -440,10 +440,7 @@ impl KrakenPrivateClient {
     ///
     /// Kraken returns the records as a JSON array; this deserialises into a
     /// `Vec<KrakenWithdrawalRecord>`.
-    pub async fn get_withdrawal_status(
-        &self,
-        asset: &str,
-    ) -> Result<Vec<KrakenWithdrawalRecord>> {
+    pub async fn get_withdrawal_status(&self, asset: &str) -> Result<Vec<KrakenWithdrawalRecord>> {
         self.post("/0/private/WithdrawStatus", &[("asset", asset)])
             .await
     }
@@ -460,11 +457,8 @@ mod tests {
         // high-entropy base64 literal for secret scanners to trip on.
         use base64::Engine;
         let secret = base64::engine::general_purpose::STANDARD.encode(b"sim-secret");
-        KrakenPrivateClient::with_base_url(
-            KrakenCredentials::new("sim-key", secret),
-            base_url,
-        )
-        .expect("client build")
+        KrakenPrivateClient::with_base_url(KrakenCredentials::new("sim-key", secret), base_url)
+            .expect("client build")
     }
 
     #[test]

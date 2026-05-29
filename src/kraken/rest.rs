@@ -266,7 +266,9 @@ impl KrakenRestClient {
         pair: Option<&str>,
     ) -> Result<HashMap<String, KrakenAssetPair>> {
         let raw: Value = if let Some(p) = pair {
-            self.http.get("/0/public/AssetPairs", &[("pair", p)]).await?
+            self.http
+                .get("/0/public/AssetPairs", &[("pair", p)])
+                .await?
         } else {
             self.http.get("/0/public/AssetPairs", &[]).await?
         };
@@ -277,10 +279,7 @@ impl KrakenRestClient {
     ///
     /// `pair` is a comma-separated list (e.g. `"XBTUSD,ETHUSD"`).
     pub async fn get_ticker(&self, pair: &str) -> Result<HashMap<String, KrakenTicker>> {
-        let raw: Value = self
-            .http
-            .get("/0/public/Ticker", &[("pair", pair)])
-            .await?;
+        let raw: Value = self.http.get("/0/public/Ticker", &[("pair", pair)]).await?;
         unwrap_kraken_envelope(raw)
     }
 
@@ -320,10 +319,7 @@ impl KrakenRestClient {
         let i = interval_mins.to_string();
         let raw: Value = self
             .http
-            .get(
-                "/0/public/OHLC",
-                &[("pair", pair), ("interval", &i)],
-            )
+            .get("/0/public/OHLC", &[("pair", pair), ("interval", &i)])
             .await?;
         unwrap_kraken_envelope(raw)
     }
@@ -333,19 +329,13 @@ impl KrakenRestClient {
     /// Returned shape mixes pair-keyed trade arrays with a `"last"`
     /// nanosecond cursor; surfaced as `serde_json::Value`.
     pub async fn get_recent_trades(&self, pair: &str) -> Result<Value> {
-        let raw: Value = self
-            .http
-            .get("/0/public/Trades", &[("pair", pair)])
-            .await?;
+        let raw: Value = self.http.get("/0/public/Trades", &[("pair", pair)]).await?;
         unwrap_kraken_envelope(raw)
     }
 
     /// `GET /0/public/Spread` — recent spread history (bid/ask).
     pub async fn get_spread(&self, pair: &str) -> Result<Value> {
-        let raw: Value = self
-            .http
-            .get("/0/public/Spread", &[("pair", pair)])
-            .await?;
+        let raw: Value = self.http.get("/0/public/Spread", &[("pair", pair)]).await?;
         unwrap_kraken_envelope(raw)
     }
 }

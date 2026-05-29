@@ -60,7 +60,10 @@ async fn place_order_round_trip() {
                 break;
             };
             let v: Value = serde_json::from_str(text.as_str()).expect("server: json");
-            let client_oid = v["data"]["clientOid"].as_str().expect("clientOid").to_string();
+            let client_oid = v["data"]["clientOid"]
+                .as_str()
+                .expect("clientOid")
+                .to_string();
             // Echo the inbound type-shape so the test can assert on it too.
             assert_eq!(v["type"], "openOrder");
             assert_eq!(v["data"]["side"], "buy");
@@ -76,7 +79,14 @@ async fn place_order_round_trip() {
 
     let client = WsOrderClient::connect(url).await.expect("connect");
     let ack = client
-        .place_order("XBTUSDTM", Side::Buy, 1, 10, OrderType::Limit, Some(30_000.0))
+        .place_order(
+            "XBTUSDTM",
+            Side::Buy,
+            1,
+            10,
+            OrderType::Limit,
+            Some(30_000.0),
+        )
         .await
         .expect("ack");
 
@@ -107,11 +117,9 @@ async fn concurrent_requests_route_by_client_oid() {
         // the second/third inbound — this would deadlock without proper
         // map-based routing.
         for (i, oid) in collected.iter().rev().enumerate() {
-            ws.send(Message::Text(
-                make_ack(oid, &format!("order-{i}")).into(),
-            ))
-            .await
-            .unwrap();
+            ws.send(Message::Text(make_ack(oid, &format!("order-{i}")).into()))
+                .await
+                .unwrap();
         }
     });
 
@@ -121,12 +129,26 @@ async fn concurrent_requests_route_by_client_oid() {
     let c2 = client.clone();
     let c3 = client.clone();
     let h1 = tokio::spawn(async move {
-        c1.place_order("XBTUSDTM", Side::Buy, 1, 10, OrderType::Limit, Some(30_000.0))
-            .await
+        c1.place_order(
+            "XBTUSDTM",
+            Side::Buy,
+            1,
+            10,
+            OrderType::Limit,
+            Some(30_000.0),
+        )
+        .await
     });
     let h2 = tokio::spawn(async move {
-        c2.place_order("XBTUSDTM", Side::Sell, 1, 10, OrderType::Limit, Some(30_010.0))
-            .await
+        c2.place_order(
+            "XBTUSDTM",
+            Side::Sell,
+            1,
+            10,
+            OrderType::Limit,
+            Some(30_010.0),
+        )
+        .await
     });
     let h3 = tokio::spawn(async move {
         c3.place_order("XBTUSDTM", Side::Buy, 2, 10, OrderType::Market, None)
@@ -161,7 +183,9 @@ async fn error_frame_resolves_as_failure() {
             "code": "400100",
             "data": {"clientOid": client_oid, "msg": "balance insufficient"},
         });
-        ws.send(Message::Text(err.to_string().into())).await.unwrap();
+        ws.send(Message::Text(err.to_string().into()))
+            .await
+            .unwrap();
     });
 
     let client = WsOrderClient::connect(url).await.expect("connect");

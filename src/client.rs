@@ -8,14 +8,14 @@
 //! - Signs every request via [`crate::auth::build_headers`]
 //! - Retries on transient failures with jittered exponential backoff
 //! - Auto-pauses on HTTP 429 (Rate Limit) using KuCoin's reset headers,
-//!   with a cap of [`MAX_RATE_LIMIT_RETRIES`] to prevent infinite loops
+//!   with a capped retry count to prevent infinite loops
 //! - Unwraps KuCoin's `{"code":"200000","data":{...}}` envelope
 //! - Percent-encodes all query parameter values before signing
 //!
 //! Shared helpers (`percent_encode`, `build_query_string`, `jitter_secs`)
 //! and the retry tuning constants live in [`crate::http`] so the
-//! authenticated [`KuCoinClient`] and the public [`PublicRestClient`] stay
-//! in sync.
+//! authenticated [`KuCoinClient`] and the public
+//! [`PublicRestClient`](crate::http::PublicRestClient) stay in sync.
 
 use std::time::Duration;
 
@@ -128,8 +128,15 @@ impl KuCoinClient {
         let qs = build_query_string(params);
         let endpoint = format!("{path}{qs}");
         let url = format!("{}{endpoint}", self.base_url);
-        self.execute_with_retries("GET", &endpoint, &url, None, DEFAULT_RETRIES, DEFAULT_BACKOFF)
-            .await
+        self.execute_with_retries(
+            "GET",
+            &endpoint,
+            &url,
+            None,
+            DEFAULT_RETRIES,
+            DEFAULT_BACKOFF,
+        )
+        .await
     }
 
     /// Authenticated POST with jittered exponential-backoff retry.
@@ -224,7 +231,7 @@ impl KuCoinClient {
                 other => {
                     return Err(ExchangeError::Config(format!(
                         "unsupported HTTP verb: {other}"
-                    )))
+                    )));
                 }
             };
             req = req.headers(headers);
@@ -323,4 +330,3 @@ impl KuCoinClient {
         serde_json::from_value(data).map_err(ExchangeError::Json)
     }
 }
-

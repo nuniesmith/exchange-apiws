@@ -1,3 +1,4 @@
+#![allow(missing_docs)] // empty crate when feature off; no-op when on
 #![cfg(feature = "binance")]
 
 //! Binance public REST integration tests via `wiremock`.
@@ -98,13 +99,11 @@ async fn get_orderbook_returns_levels() {
         .and(path("/api/v3/depth"))
         .and(query_param("symbol", "BTCUSDT"))
         .and(query_param("limit", "5"))
-        .respond_with(
-            ResponseTemplate::new(200).set_body_json(serde_json::json!({
-                "lastUpdateId": 1_234_567_890_u64,
-                "bids": [["96000.00", "1.5"], ["95999.50", "2.0"]],
-                "asks": [["96000.50", "0.8"], ["96001.00", "3.0"]]
-            })),
-        )
+        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+            "lastUpdateId": 1_234_567_890_u64,
+            "bids": [["96000.00", "1.5"], ["95999.50", "2.0"]],
+            "asks": [["96000.50", "0.8"], ["96001.00", "3.0"]]
+        })))
         .expect(1)
         .mount(&server)
         .await;
@@ -168,15 +167,13 @@ async fn get_ticker_returns_book_ticker() {
     Mock::given(method("GET"))
         .and(path("/api/v3/ticker/bookTicker"))
         .and(query_param("symbol", "BTCUSDT"))
-        .respond_with(
-            ResponseTemplate::new(200).set_body_json(serde_json::json!({
-                "symbol": "BTCUSDT",
-                "bidPrice": "96000.10",
-                "bidQty": "1.5",
-                "askPrice": "96001.00",
-                "askQty": "0.8"
-            })),
-        )
+        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+            "symbol": "BTCUSDT",
+            "bidPrice": "96000.10",
+            "bidQty": "1.5",
+            "askPrice": "96001.00",
+            "askQty": "0.8"
+        })))
         .expect(1)
         .mount(&server)
         .await;
@@ -195,30 +192,28 @@ async fn get_ticker_24h_returns_window_stats() {
     Mock::given(method("GET"))
         .and(path("/api/v3/ticker/24hr"))
         .and(query_param("symbol", "BTCUSDT"))
-        .respond_with(
-            ResponseTemplate::new(200).set_body_json(serde_json::json!({
-                "symbol": "BTCUSDT",
-                "priceChange": "500.00",
-                "priceChangePercent": "0.52",
-                "weightedAvgPrice": "96100.00",
-                "lastPrice": "96250.00",
-                "lastQty": "0.05",
-                "bidPrice": "96249.50",
-                "bidQty": "1.0",
-                "askPrice": "96250.50",
-                "askQty": "1.2",
-                "openPrice": "95750.00",
-                "highPrice": "96400.00",
-                "lowPrice": "95500.00",
-                "volume": "1500.5",
-                "quoteVolume": "144000000.0",
-                "openTime": 1_700_000_000_000_u64,
-                "closeTime": 1_700_086_400_000_u64,
-                "firstId": 1_000_000_u64,
-                "lastId": 1_050_000_u64,
-                "count": 50_000_u64
-            })),
-        )
+        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+            "symbol": "BTCUSDT",
+            "priceChange": "500.00",
+            "priceChangePercent": "0.52",
+            "weightedAvgPrice": "96100.00",
+            "lastPrice": "96250.00",
+            "lastQty": "0.05",
+            "bidPrice": "96249.50",
+            "bidQty": "1.0",
+            "askPrice": "96250.50",
+            "askQty": "1.2",
+            "openPrice": "95750.00",
+            "highPrice": "96400.00",
+            "lowPrice": "95500.00",
+            "volume": "1500.5",
+            "quoteVolume": "144000000.0",
+            "openTime": 1_700_000_000_000_u64,
+            "closeTime": 1_700_086_400_000_u64,
+            "firstId": 1_000_000_u64,
+            "lastId": 1_050_000_u64,
+            "count": 50_000_u64
+        })))
         .expect(1)
         .mount(&server)
         .await;
@@ -237,14 +232,12 @@ async fn get_exchange_info_returns_raw_json() {
     let server = MockServer::start().await;
     Mock::given(method("GET"))
         .and(path("/api/v3/exchangeInfo"))
-        .respond_with(
-            ResponseTemplate::new(200).set_body_json(serde_json::json!({
-                "timezone": "UTC",
-                "serverTime": 1_700_000_000_000_u64,
-                "rateLimits": [],
-                "symbols": []
-            })),
-        )
+        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+            "timezone": "UTC",
+            "serverTime": 1_700_000_000_000_u64,
+            "rateLimits": [],
+            "symbols": []
+        })))
         .expect(1)
         .mount(&server)
         .await;
@@ -267,8 +260,8 @@ async fn get_futures_klines_returns_parsed_bars() {
         .and(query_param("symbol", "BTCUSDT"))
         .and(query_param("interval", "1m"))
         .and(query_param("limit", "1"))
-        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!([
-            [
+        .respond_with(
+            ResponseTemplate::new(200).set_body_json(serde_json::json!([[
                 1_700_000_000_000_u64,
                 "96000.0",
                 "96100.0",
@@ -281,8 +274,8 @@ async fn get_futures_klines_returns_parsed_bars() {
                 "50.0",
                 "4800000.0",
                 "0"
-            ]
-        ])))
+            ]])),
+        )
         .expect(1)
         .mount(&server)
         .await;
@@ -344,18 +337,16 @@ async fn get_futures_mark_price_returns_snapshot() {
     Mock::given(method("GET"))
         .and(path("/fapi/v1/premiumIndex"))
         .and(query_param("symbol", "BTCUSDT"))
-        .respond_with(
-            ResponseTemplate::new(200).set_body_json(serde_json::json!({
-                "symbol": "BTCUSDT",
-                "markPrice": "96010.5",
-                "indexPrice": "96005.0",
-                "estimatedSettlePrice": "96012.0",
-                "lastFundingRate": "0.0001",
-                "interestRate": "0.0001",
-                "nextFundingTime": 1_700_028_800_000_u64,
-                "time": 1_700_000_000_000_u64
-            })),
-        )
+        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+            "symbol": "BTCUSDT",
+            "markPrice": "96010.5",
+            "indexPrice": "96005.0",
+            "estimatedSettlePrice": "96012.0",
+            "lastFundingRate": "0.0001",
+            "interestRate": "0.0001",
+            "nextFundingTime": 1_700_028_800_000_u64,
+            "time": 1_700_000_000_000_u64
+        })))
         .expect(1)
         .mount(&server)
         .await;
@@ -376,13 +367,11 @@ async fn get_futures_open_interest_returns_snapshot() {
     Mock::given(method("GET"))
         .and(path("/fapi/v1/openInterest"))
         .and(query_param("symbol", "BTCUSDT"))
-        .respond_with(
-            ResponseTemplate::new(200).set_body_json(serde_json::json!({
-                "symbol": "BTCUSDT",
-                "openInterest": "12345.678",
-                "time": 1_700_000_000_000_u64
-            })),
-        )
+        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+            "symbol": "BTCUSDT",
+            "openInterest": "12345.678",
+            "time": 1_700_000_000_000_u64
+        })))
         .expect(1)
         .mount(&server)
         .await;

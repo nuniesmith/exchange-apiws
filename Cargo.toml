@@ -1,6 +1,6 @@
 [package]
 name          = "exchange-apiws"
-version       = "0.3.1"
+version       = "0.3.2"
 edition       = "2024"
 rust-version  = "1.94.1"
 authors       = ["nuniesmith"]
@@ -164,6 +164,11 @@ nursery  = { level = "warn", priority = -1 }
 # KuCoin returns numbers as strings; error paths are self-documenting.
 missing_errors_doc  = "allow"
 missing_panics_doc  = "allow"
+
+# New in clippy 1.96 — suggests Duration::from_mins / from_hours, which were
+# stabilised AFTER this crate's declared rust-version (1.94.1). Taking the
+# suggestion would break the MSRV build, so keep the explicit-unit form.
+duration_suboptimal_units = "allow"
 
 # `KuCoinClient::get`, `KuCoinClient::post` etc. — repetition is intentional.
 module_name_repetitions = "allow"

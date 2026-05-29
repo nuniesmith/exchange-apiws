@@ -142,7 +142,7 @@ pub struct WsRunnerConfig {
     /// How often to send an application-level KuCoin ping (seconds).
     pub ping_interval_secs: u64,
     /// Base reconnect delay (seconds). Doubles on each attempt up to
-    /// [`max_reconnect_delay_secs`].
+    /// [`Self::max_reconnect_delay_secs`].
     pub reconnect_delay_secs: u64,
     /// Hard ceiling on the per-attempt reconnect delay (seconds).
     ///
@@ -281,7 +281,7 @@ impl WsMsgGuard {
 /// [`DataMessage`]s to `tx`, and reconnects automatically on any disconnect.
 ///
 /// The reconnect attempt counter resets to zero whenever a session ran
-/// successfully for at least [`STABLE_SESSION_SECS`] seconds. This means
+/// successfully for at least `STABLE_SESSION_SECS` seconds. This means
 /// a stable connection that eventually drops is treated the same as a fresh
 /// start — it won't exhaust the attempt budget just from normal daily
 /// reconnects.
@@ -373,8 +373,7 @@ pub async fn run_feed(
                 if uptime_secs >= STABLE_SESSION_SECS {
                     info!(
                         exchange = connector.exchange_name(),
-                        uptime_secs,
-                        "WS stable session ended — resetting reconnect counter",
+                        uptime_secs, "WS stable session ended — resetting reconnect counter",
                     );
                     attempts = 0;
                 } else {
@@ -387,7 +386,7 @@ pub async fn run_feed(
                         );
                         config.emit(RunnerEvent::ReconnectsExhausted { attempts });
                         return Err(ExchangeError::WsDisconnected {
-                            url: url.to_string(),
+                            url: url.clone(),
                             attempts,
                         });
                     }

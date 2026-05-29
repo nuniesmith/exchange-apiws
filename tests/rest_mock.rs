@@ -12,7 +12,7 @@
 use exchange_apiws::{
     ExchangeError, KuCoinClient,
     client::Credentials,
-    rest::{MarginModel, StopOrderDetail},
+    rest::MarginModel,
     types::{OrderType, Side},
 };
 use wiremock::matchers::{method, path, query_param};
@@ -93,7 +93,7 @@ async fn get_balance_zero_is_valid() {
         .get_balance("USDT")
         .await
         .expect("get_balance failed");
-    assert_eq!(balance, 0.0);
+    assert!(balance.abs() < f64::EPSILON, "expected 0.0, got {balance}");
 }
 
 // ── get_position ──────────────────────────────────────────────────────────────
@@ -1749,7 +1749,7 @@ async fn get_margin_order_returns_typed_detail() {
                 "id":"o-1","symbol":"BTC-USDT","side":"buy","type":"limit",
                 "size":"0.01","price":"30000","dealSize":"0","dealFunds":"0",
                 "marginModel":"cross","timeInForce":"GTC","isActive":true,
-                "cancelExist":false,"createdAt":1700000000000_u64
+                "cancelExist":false,"createdAt":1_700_000_000_000_u64
             }))),
         )
         .expect(1)
@@ -1821,8 +1821,8 @@ async fn get_margin_fills_unwraps_items_page() {
             ResponseTemplate::new(200).set_body_json(ok_envelope(serde_json::json!({
                 "currentPage": 1, "pageSize": 50, "totalNum": 2, "totalPage": 1,
                 "items": [
-                    {"symbol":"BTC-USDT","orderId":"o-1","side":"buy","price":"30000","size":"0.005","funds":"150","fee":"0.15","feeCurrency":"USDT","liquidity":"taker","tradeId":"t-1","createdAt":1700000000000_u64},
-                    {"symbol":"BTC-USDT","orderId":"o-2","side":"sell","price":"30010","size":"0.003","funds":"90.03","fee":"0.09","feeCurrency":"USDT","liquidity":"maker","tradeId":"t-2","createdAt":1700000000050_u64}
+                    {"symbol":"BTC-USDT","orderId":"o-1","side":"buy","price":"30000","size":"0.005","funds":"150","fee":"0.15","feeCurrency":"USDT","liquidity":"taker","tradeId":"t-1","createdAt":1_700_000_000_000_u64},
+                    {"symbol":"BTC-USDT","orderId":"o-2","side":"sell","price":"30010","size":"0.003","funds":"90.03","fee":"0.09","feeCurrency":"USDT","liquidity":"maker","tradeId":"t-2","createdAt":1_700_000_000_050_u64}
                 ]
             }))),
         )

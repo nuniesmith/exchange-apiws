@@ -1,3 +1,4 @@
+#![allow(missing_docs)] // empty crate when feature off; no-op when on
 #![cfg(feature = "binance")]
 
 //! Binance WS integration test via a local `tokio-tungstenite` server.
@@ -92,14 +93,7 @@ async fn run_feed_delivers_all_binance_variants() {
         Arc::new(BinanceConnector::with_url(&url, "binance"));
     let (tx, mut rx) = mpsc::channel::<DataMessage>(16);
 
-    let feed = tokio::spawn(run_feed(
-        url,
-        vec![],
-        connector,
-        tx,
-        fast_config(),
-        sd_rx,
-    ));
+    let feed = tokio::spawn(run_feed(url, vec![], connector, tx, fast_config(), sd_rx));
 
     let mut got = Vec::with_capacity(frame_count);
     let deadline = tokio::time::sleep(Duration::from_secs(5));
@@ -138,8 +132,14 @@ async fn run_feed_delivers_all_binance_variants() {
     assert!(kinds.contains(&"trade"), "missing trade: {kinds:?}");
     assert!(kinds.contains(&"ticker"), "missing ticker: {kinds:?}");
     assert!(kinds.contains(&"candle"), "missing candle: {kinds:?}");
-    assert!(kinds.contains(&"book.delta"), "missing depth delta: {kinds:?}");
-    assert!(kinds.contains(&"book.snap"), "missing depth snapshot: {kinds:?}");
+    assert!(
+        kinds.contains(&"book.delta"),
+        "missing depth delta: {kinds:?}"
+    );
+    assert!(
+        kinds.contains(&"book.snap"),
+        "missing depth snapshot: {kinds:?}"
+    );
     assert!(kinds.contains(&"funding"), "missing funding: {kinds:?}");
 
     sd_tx.send(true).unwrap();

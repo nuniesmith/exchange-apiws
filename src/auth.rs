@@ -67,11 +67,8 @@ pub fn build_headers(
 /// base64 digests only use printable ASCII, so this should never fail in
 /// practice — but we propagate the error rather than panicking.
 fn hv(s: &str) -> Result<HeaderValue> {
-    HeaderValue::from_str(s).map_err(|_| {
-        ExchangeError::Auth(format!(
-            "header value contains invalid bytes: {s:?}"
-        ))
-    })
+    HeaderValue::from_str(s)
+        .map_err(|_| ExchangeError::Auth(format!("header value contains invalid bytes: {s:?}")))
 }
 
 #[cfg(test)]

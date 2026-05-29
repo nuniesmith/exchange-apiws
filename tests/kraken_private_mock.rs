@@ -1,3 +1,4 @@
+#![allow(missing_docs)] // empty crate when feature off; no-op when on
 #![cfg(feature = "kraken")]
 
 //! `KrakenPrivateClient` integration tests via `wiremock`.
@@ -41,11 +42,8 @@ fn sim_client(server: &MockServer) -> KrakenPrivateClient {
     // Decoded plaintext is "sim-secret" — obviously not real.
     use base64::Engine;
     let secret = base64::engine::general_purpose::STANDARD.encode(b"sim-secret");
-    KrakenPrivateClient::with_base_url(
-        KrakenCredentials::new("sim-key", secret),
-        server.uri(),
-    )
-    .expect("build private client")
+    KrakenPrivateClient::with_base_url(KrakenCredentials::new("sim-key", secret), server.uri())
+        .expect("build private client")
 }
 
 #[tokio::test]
@@ -58,18 +56,17 @@ async fn get_balance_sends_signed_headers_and_returns_map() {
         .and(header_exists("API-Key"))
         .and(header_exists("API-Sign"))
         .and(body_string_contains("nonce="))
-        .respond_with(ResponseTemplate::new(200).set_body_json(ok_envelope(serde_json::json!({
-            "XXBT": "0.50000000",
-            "ZUSD": "1234.5678"
-        }))))
+        .respond_with(
+            ResponseTemplate::new(200).set_body_json(ok_envelope(serde_json::json!({
+                "XXBT": "0.50000000",
+                "ZUSD": "1234.5678"
+            }))),
+        )
         .expect(1)
         .mount(&server)
         .await;
 
-    let bal = sim_client(&server)
-        .get_balance()
-        .await
-        .expect("balance");
+    let bal = sim_client(&server).get_balance().await.expect("balance");
     assert_eq!(bal.len(), 2);
     assert_eq!(bal["XXBT"], "0.50000000");
     assert_eq!(bal["ZUSD"], "1234.5678");
@@ -81,26 +78,28 @@ async fn get_open_orders_returns_typed() {
     Mock::given(method("POST"))
         .and(path("/0/private/OpenOrders"))
         .and(header_exists("API-Sign"))
-        .respond_with(ResponseTemplate::new(200).set_body_json(ok_envelope(serde_json::json!({
-            "open": {
-                "OQCLML-BW3P3-BUCMWZ": {
-                    "status": "open",
-                    "opentm": 1_700_000_000.0_f64,
-                    "vol": "1.00000000",
-                    "vol_exec": "0.00000000",
-                    "cost": "0.00000",
-                    "fee": "0.00000",
-                    "descr": {
-                        "pair": "XBTUSD",
-                        "type": "buy",
-                        "ordertype": "limit",
-                        "price": "30000",
-                        "price2": "0",
-                        "leverage": "none"
+        .respond_with(
+            ResponseTemplate::new(200).set_body_json(ok_envelope(serde_json::json!({
+                "open": {
+                    "OQCLML-BW3P3-BUCMWZ": {
+                        "status": "open",
+                        "opentm": 1_700_000_000.0_f64,
+                        "vol": "1.00000000",
+                        "vol_exec": "0.00000000",
+                        "cost": "0.00000",
+                        "fee": "0.00000",
+                        "descr": {
+                            "pair": "XBTUSD",
+                            "type": "buy",
+                            "ordertype": "limit",
+                            "price": "30000",
+                            "price2": "0",
+                            "leverage": "none"
+                        }
                     }
                 }
-            }
-        }))))
+            }))),
+        )
         .expect(1)
         .mount(&server)
         .await;
@@ -120,10 +119,12 @@ async fn get_closed_orders_returns_count() {
     let server = MockServer::start().await;
     Mock::given(method("POST"))
         .and(path("/0/private/ClosedOrders"))
-        .respond_with(ResponseTemplate::new(200).set_body_json(ok_envelope(serde_json::json!({
-            "closed": {},
-            "count": 42
-        }))))
+        .respond_with(
+            ResponseTemplate::new(200).set_body_json(ok_envelope(serde_json::json!({
+                "closed": {},
+                "count": 42
+            }))),
+        )
         .expect(1)
         .mount(&server)
         .await;
@@ -148,10 +149,12 @@ async fn place_order_returns_txid() {
         .and(body_string_contains("ordertype=limit"))
         .and(body_string_contains("volume=1.0"))
         .and(body_string_contains("price=30000"))
-        .respond_with(ResponseTemplate::new(200).set_body_json(ok_envelope(serde_json::json!({
-            "descr": {"order": "buy 1.0 XBTUSD @ limit 30000"},
-            "txid": ["OQCLML-BW3P3-BUCMWZ"]
-        }))))
+        .respond_with(
+            ResponseTemplate::new(200).set_body_json(ok_envelope(serde_json::json!({
+                "descr": {"order": "buy 1.0 XBTUSD @ limit 30000"},
+                "txid": ["OQCLML-BW3P3-BUCMWZ"]
+            }))),
+        )
         .expect(1)
         .mount(&server)
         .await;
@@ -208,17 +211,19 @@ async fn get_trades_history_returns_typed() {
     let server = MockServer::start().await;
     Mock::given(method("POST"))
         .and(path("/0/private/TradesHistory"))
-        .respond_with(ResponseTemplate::new(200).set_body_json(ok_envelope(serde_json::json!({
-            "trades": {
-                "T1": {
-                    "ordertxid":"O1","postxid":"","pair":"XXBTZUSD",
-                    "time":1_700_000_000.0,"type":"buy","ordertype":"limit",
-                    "price":"30000","cost":"30000","fee":"48","vol":"1.0",
-                    "margin":"0.0","misc":""
-                }
-            },
-            "count": 1
-        }))))
+        .respond_with(
+            ResponseTemplate::new(200).set_body_json(ok_envelope(serde_json::json!({
+                "trades": {
+                    "T1": {
+                        "ordertxid":"O1","postxid":"","pair":"XXBTZUSD",
+                        "time":1_700_000_000.0,"type":"buy","ordertype":"limit",
+                        "price":"30000","cost":"30000","fee":"48","vol":"1.0",
+                        "margin":"0.0","misc":""
+                    }
+                },
+                "count": 1
+            }))),
+        )
         .expect(1)
         .mount(&server)
         .await;
@@ -253,10 +258,7 @@ async fn get_ledger_returns_typed() {
         .mount(&server)
         .await;
 
-    let l = sim_client(&server)
-        .get_ledger("XBT")
-        .await
-        .expect("ledger");
+    let l = sim_client(&server).get_ledger("XBT").await.expect("ledger");
     assert_eq!(l.count, 1);
     let e = &l.ledger["L1"];
     assert_eq!(e.entry_type, "trade");
@@ -271,9 +273,11 @@ async fn withdraw_returns_refid() {
         .and(body_string_contains("asset=XBT"))
         .and(body_string_contains("key=my-wallet"))
         .and(body_string_contains("amount=0.05"))
-        .respond_with(ResponseTemplate::new(200).set_body_json(ok_envelope(serde_json::json!({
-            "refid": "FT5Z3X-..."
-        }))))
+        .respond_with(
+            ResponseTemplate::new(200).set_body_json(ok_envelope(serde_json::json!({
+                "refid": "FT5Z3X-..."
+            }))),
+        )
         .expect(1)
         .mount(&server)
         .await;

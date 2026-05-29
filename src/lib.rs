@@ -119,16 +119,16 @@ pub mod kraken;
 pub use binance::{BinanceConnector, BinanceRestClient};
 #[cfg(feature = "bybit")]
 pub use bybit::{BybitCategory, BybitConnector, BybitRestClient};
+pub use client::{Credentials, KuCoinClient};
+pub use connectors::{ExchangeConfig, KuCoin, KucoinEnv};
 #[cfg(feature = "cryptocom")]
 pub use cryptocom::{
     CryptocomConnector, CryptocomCredentials, CryptocomPrivateClient, CryptocomRestClient,
 };
-#[cfg(feature = "kraken")]
-pub use kraken::{KrakenConnector, KrakenCredentials, KrakenPrivateClient, KrakenRestClient};
-pub use client::{Credentials, KuCoinClient};
-pub use connectors::{ExchangeConfig, KuCoin, KucoinEnv};
 pub use error::{ExchangeError, Result};
 pub use http::PublicRestClient;
+#[cfg(feature = "kraken")]
+pub use kraken::{KrakenConnector, KrakenCredentials, KrakenPrivateClient, KrakenRestClient};
 pub use types::{Candle, OrderType, STP, Side, TimeInForce};
 
 // ── WS convenience re-exports ─────────────────────────────────────────────────
