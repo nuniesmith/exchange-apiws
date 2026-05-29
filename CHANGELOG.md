@@ -8,6 +8,25 @@ and the project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.
 
 — nothing yet —
 
+## [0.2.20] – 2026-05-28
+
+### Changed
+
+- **`scripts/release.sh` rewritten** to be publish-safe. The old script
+  derived the next version from git tags (of which there were none, so
+  it would have published `v0.0.1` while Cargo.toml said 0.2.x) and ran
+  `cargo publish` with no validation. The new script treats Cargo.toml
+  as the version source of truth (matching the per-PR bump workflow),
+  refuses to re-tag an existing version, requires a matching
+  `CHANGELOG.md` entry, and gates the publish on `cargo build --release`
+  + `cargo test` + `cargo package` all succeeding. New flags:
+  `--bump-patch` (increment + commit before releasing) and
+  `--allow-dirty`.
+- **`Cargo.toml` `exclude`** added so the published crate no longer ships
+  internal planning notes (`todo.md`), dev tooling (`scripts/`), or
+  generated lint reports. `src/`, `tests/`, `examples/`, README,
+  CHANGELOG, and LICENSE still ship.
+
 ## [0.2.19] – 2026-05-27
 
 ### Added
@@ -284,7 +303,8 @@ Initial KuCoin Futures REST + WebSocket implementation, including:
 - Bullet-public / bullet-private WS token negotiation
 - 100 msg / 10 s sliding-window outbound rate limit
 
-[Unreleased]: https://github.com/nuniesmith/exchange-apiws/compare/v0.2.19...HEAD
+[Unreleased]: https://github.com/nuniesmith/exchange-apiws/compare/v0.2.20...HEAD
+[0.2.20]: https://github.com/nuniesmith/exchange-apiws/compare/v0.2.19...v0.2.20
 [0.2.19]: https://github.com/nuniesmith/exchange-apiws/compare/v0.2.18...v0.2.19
 [0.2.18]: https://github.com/nuniesmith/exchange-apiws/compare/v0.2.17...v0.2.18
 [0.2.17]: https://github.com/nuniesmith/exchange-apiws/compare/v0.2.16...v0.2.17
