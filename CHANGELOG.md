@@ -8,6 +8,18 @@ and the project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.
 
 — nothing yet —
 
+## [0.3.1] – 2026-05-29
+
+### Added
+
+- **`prelude` module** — `use exchange_apiws::prelude::*;` brings the
+  error types, the unified `DataMessage` model + `ExchangeConnector`
+  trait, the WS runner entry points (`run_feed`,
+  `run_feed_supervised`, config + event types), and every enabled
+  exchange's client + connector into scope in one glob import. Per-
+  exchange items respect the same Cargo features as the crate root.
+  Purely additive — existing explicit-path imports are unaffected.
+
 ## [0.3.0] – 2026-05-28
 
 ### Added
@@ -326,7 +338,8 @@ Initial KuCoin Futures REST + WebSocket implementation, including:
 - Bullet-public / bullet-private WS token negotiation
 - 100 msg / 10 s sliding-window outbound rate limit
 
-[Unreleased]: https://github.com/nuniesmith/exchange-apiws/compare/v0.3.0...HEAD
+[Unreleased]: https://github.com/nuniesmith/exchange-apiws/compare/v0.3.1...HEAD
+[0.3.1]: https://github.com/nuniesmith/exchange-apiws/compare/v0.3.0...v0.3.1
 [0.3.0]: https://github.com/nuniesmith/exchange-apiws/compare/v0.2.20...v0.3.0
 [0.2.20]: https://github.com/nuniesmith/exchange-apiws/compare/v0.2.19...v0.2.20
 [0.2.19]: https://github.com/nuniesmith/exchange-apiws/compare/v0.2.18...v0.2.19

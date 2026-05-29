@@ -185,6 +185,12 @@ two cross-cutting demos. Run any one with `cargo run --example <name>`:
 
 ## Quick Start
 
+> **Tip:** `use exchange_apiws::prelude::*;` brings the error types, the
+> unified `DataMessage` model + `ExchangeConnector` trait, the WS runner
+> entry points (`run_feed`, `run_feed_supervised`), and every enabled
+> exchange's client + connector into scope in one line. The examples
+> below import explicit paths for clarity.
+
 ### Public market data — Binance
 
 ```rust
