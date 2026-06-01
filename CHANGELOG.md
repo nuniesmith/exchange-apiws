@@ -8,6 +8,25 @@ and the project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.
 
 — nothing yet —
 
+## [0.5.0] – 2026-06-01
+
+### Added
+
+- **OKX public WebSocket connector** (`src/okx/`) — `OkxConnector` +
+  `OkxChannel` (`trades` / `tickers` / `books`) over
+  `wss://ws.okx.com:8443/ws/v5/public`. Implements `ExchangeConnector`, parsing
+  into the unified `DataMessage::{Trade,Ticker,OrderBook}`. Gated behind the new
+  `okx` feature (in `default`).
+- **Coinbase Advanced Trade public WebSocket connector** (`src/coinbase/`) —
+  `CoinbaseConnector` + `CoinbaseChannel` (`ticker` / `market_trades` /
+  `level2`) over `wss://advanced-trade-ws.coinbase.com`. RFC3339 trade
+  timestamps are parsed to epoch millis. Gated behind the new `coinbase`
+  feature (in `default`).
+
+  > Fills the last cross-exchange gap for downstream ingestion consumers
+  > (e.g. janus's `jflow-exchanges`, which covers Kraken/Coinbase/OKX) — janus
+  > can now retire its in-house Coinbase + OKX adapters.
+
 ## [0.4.0] – 2026-06-01
 
 ### Added
