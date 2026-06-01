@@ -114,10 +114,10 @@ impl ExchangeConnector for CoinbaseConnector {
         }
     }
 
-    /// Coinbase subscribes one channel per frame. The runner sends a single
-    /// `subscription_msg`, so we return the first channel's frame and rely on
-    /// [`Self::subscription_messages`] for the multi-channel case. When a
-    /// single channel is configured (the common case) this is exact.
+    /// Coinbase subscribes one channel per frame, but the runner sends a single
+    /// `subscription_msg` — so this returns the first configured channel's
+    /// frame. For the common single-channel case it's exact; to subscribe
+    /// multiple channels, run one connector per channel.
     fn subscription_message(&self, _symbol: &str) -> Option<String> {
         self.channels.first().map(|&c| self.subscribe_frame(c))
     }
