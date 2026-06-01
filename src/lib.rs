@@ -118,7 +118,10 @@ pub mod kraken;
 #[cfg(feature = "binance")]
 pub use binance::{BinanceConnector, BinanceRestClient};
 #[cfg(feature = "bybit")]
-pub use bybit::{BybitCategory, BybitConnector, BybitRestClient};
+pub use bybit::{
+    BybitCategory, BybitConnector, BybitCredentials, BybitOrderAck, BybitOrderRequest,
+    BybitOrderSide, BybitOrderType, BybitPrivateClient, BybitRestClient, BybitTimeInForce,
+};
 pub use client::{Credentials, KuCoinClient};
 pub use connectors::{ExchangeConfig, KuCoin, KucoinEnv};
 #[cfg(feature = "cryptocom")]

@@ -8,6 +8,26 @@ and the project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.
 
 — nothing yet —
 
+## [0.4.0] – 2026-06-01
+
+### Added
+
+- **Bybit private REST** — a signed `BybitPrivateClient` (`src/bybit/private.rs`)
+  alongside the existing public client. HMAC-SHA256 v5 request signing
+  (`BybitCredentials::sign_rest` / `sign_ws` in `src/bybit/auth.rs`, with the
+  `X-BAPI-API-KEY` / `-TIMESTAMP` / `-RECV-WINDOW` / `-SIGN` headers).
+  Endpoints: `place_order`, `cancel_order`, `get_open_orders`, `get_positions`,
+  `get_wallet_balance`. Order-entry types `BybitOrderRequest`
+  (`market`/`limit` builders + `with_order_link_id` / `reduce_only`),
+  `BybitOrderAck`, `BybitOrderSide`, `BybitOrderType`, `BybitTimeInForce`.
+  `BybitCredentials` is `ZeroizeOnDrop` and loads from `BYBIT_API_KEY` /
+  `BYBIT_API_SECRET`. Re-exported from the crate root and gated behind the
+  existing `bybit` feature. Example: `examples/bybit_private_trading.rs`.
+
+  > Closes the "Binance/Bybit have no signed surface" roadmap gap (item B2)
+  > and unblocks downstream consumers (e.g. janus) from maintaining their own
+  > Bybit client.
+
 ## [0.3.2] – 2026-05-29
 
 ### Added
