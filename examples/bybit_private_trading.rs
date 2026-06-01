@@ -25,9 +25,7 @@ async fn main() -> exchange_apiws::Result<()> {
             return Ok(());
         }
     };
-    let testnet = std::env::var("BYBIT_TESTNET")
-        .map(|v| v != "false")
-        .unwrap_or(true);
+    let testnet = std::env::var("BYBIT_TESTNET").map_or(true, |v| v != "false");
     let client = BybitPrivateClient::new(creds, testnet)?;
     let category = BybitCategory::Linear;
     let symbol = "BTCUSDT";
