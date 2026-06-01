@@ -109,6 +109,10 @@ name = "bybit_public_market"
 required-features = ["bybit"]
 
 [[example]]
+name = "bybit_private_trading"
+required-features = ["bybit"]
+
+[[example]]
 name = "kraken_public_market"
 required-features = ["kraken"]
 
