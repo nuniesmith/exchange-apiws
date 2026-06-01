@@ -4,43 +4,52 @@
 > see the [Done](#done--original-roadmap-complete) summary at the bottom and
 > `CHANGELOG.md` for the per-version detail.
 
-## Where things stand (2026-05, v0.3.2)
+## Where things stand (2026-06, **v0.5.0 — published on crates.io**)
 
-Five exchanges, four envelope variants, three signing schemes. Shared
-async runner with supervised token refresh, connect/idle timeouts,
-cascade-start WARN, and a `RunnerEvent` observability hook. 311 offline
-tests (wiremock + local `tokio-tungstenite`), all green. GitHub Actions CI gates
-fmt / clippy (all-features **and** no-default-features) / test matrix /
-rustdoc (`-D warnings`) / MSRV 1.94.1. Per-exchange Cargo features.
-Runnable examples per exchange. README + CHANGELOG current.
+Seven venues. Shared async runner with supervised token refresh,
+connect/idle timeouts, cascade-start WARN, and a `RunnerEvent`
+observability hook. Offline test suite (wiremock + local
+`tokio-tungstenite`), all green. CI gates fmt / clippy (all-features **and**
+no-default-features) / test matrix / rustdoc (`-D warnings`) / MSRV 1.94.1.
+Per-exchange Cargo features. Runnable examples. README + CHANGELOG current.
 
 | Exchange | Public REST | Private REST | Public WS | Private WS | WS order entry |
 |---|---|---|---|---|---|
 | KuCoin     | ✓ | ✓ | ✓ | ✓ | ✓ |
 | Binance    | ✓ | — | ✓ | — | — |
-| Bybit      | ✓ | — | ✓ | — | — |
+| Bybit      | ✓ | **✓ (0.4.0)** | ✓ | — | — |
 | Kraken     | ✓ | ✓ | ✓ | — | — |
 | Crypto.com | ✓ | ✓ | ✓ | — | — |
+| Coinbase   | — | — | **✓ (0.5.0)** | — | — |
+| OKX        | — | — | **✓ (0.5.0)** | — | — |
 
-**The biggest gaps the matrix makes obvious:** Binance/Bybit have no
-signed surface at all, four of five exchanges have no private WS, and
-only KuCoin can place orders over WS. Those three columns are where the
-functional roadmap goes next.
+**Recently shipped** (consumed by the FKS stack — see
+`fks-full/docs/MULTI_ASSET_BRAIN_ROADMAP.md`):
+- **0.4.0** — signed Bybit v5 REST (`BybitPrivateClient`: orders, positions,
+  wallet) + HMAC signing. Closed the "Bybit has no signed surface" gap.
+- **0.5.0** — Coinbase Advanced Trade + OKX v5 **public WS connectors**
+  (trades/tickers/books → unified `DataMessage`).
+
+**Remaining gaps the matrix shows:** Binance still has no signed surface;
+Coinbase/OKX are WS-only (no REST/private); four venues have no private WS;
+only KuCoin places orders over WS. Those columns are the functional roadmap
+(Sections B/C/H below). Highest-value for the FKS brain: a Bybit **private WS**
+user-data stream (fills/positions) so janus's Bybit path is trade-aware.
 
 ---
 
 ## Recommended next steps (priority order)
 
-1. **Publish `0.3.x` to crates.io.** Everything is ready: `release.sh`
-   is publish-safe (validates, tags, pushes, publishes), the package
-   `exclude` is set, and the README already shows crates.io/docs.rs
-   badges — which are **currently 404 because the crate was never
-   published** (zero git tags). This is the single highest-leverage
-   move: it unlocks real users and feedback, and de-bullshits the
-   badges. Needs your crates.io token (`cargo login`) — I can do every
-   step up to the final `cargo publish`. → [A1](#a-publishing--release)
+> ✅ **Published.** The crate is live on crates.io (0.5.0). `release.sh` is
+> publish-safe and used. The priority list below now leads with functional
+> surface, not the publish.
 
-2. **Binance + Bybit private REST** (signed account / orders /
+1. **Bybit + the other venues' private WS user-data streams.** Bybit has signed
+   REST now (0.4.0) but no private WS — so a Bybit feed isn't *trade-aware*
+   (your own fills/positions/balances). This is the highest-value functional
+   gap for the FKS brain (janus's `bybit_compat` would consume it). → [C](#c-private-websocket--ws-order-entry)
+
+2. **Binance private REST** (signed account / orders /
    positions). They're read-only today; for a *published* crate this is
    the most-requested surface. Binance = HMAC-SHA256 over the query
    string; Bybit v5 = HMAC-SHA256 over `timestamp+key+recv_window+body`
