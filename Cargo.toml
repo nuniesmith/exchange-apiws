@@ -1,6 +1,6 @@
 [package]
 name          = "exchange-apiws"
-version       = "0.4.0"
+version       = "0.5.0"
 edition       = "2024"
 rust-version  = "1.94.1"
 authors       = ["nuniesmith"]
@@ -27,11 +27,13 @@ exclude = ["todo.md", "scripts/", "lint_report.md", "lint_report_bin", "/.github
 # KuCoin is the original implementation and is always on — most of its
 # code lives in the crate's shared modules (auth, client, ws/runner) and
 # can't be cleanly gated without splitting the crate.
-default    = ["binance", "bybit", "kraken", "cryptocom"]
+default    = ["binance", "bybit", "kraken", "cryptocom", "coinbase", "okx"]
 binance    = []
 bybit      = []
 kraken     = []
 cryptocom  = []
+coinbase   = []
+okx        = []
 
 # Expose development-only helpers (e.g. `Credentials::sim()`) in non-test
 # binaries. Never enable this in production builds.

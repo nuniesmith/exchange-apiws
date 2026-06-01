@@ -108,10 +108,14 @@ pub mod ws;
 pub mod binance;
 #[cfg(feature = "bybit")]
 pub mod bybit;
+#[cfg(feature = "coinbase")]
+pub mod coinbase;
 #[cfg(feature = "cryptocom")]
 pub mod cryptocom;
 #[cfg(feature = "kraken")]
 pub mod kraken;
+#[cfg(feature = "okx")]
+pub mod okx;
 
 // ── Primary re-exports ────────────────────────────────────────────────────────
 
@@ -123,6 +127,8 @@ pub use bybit::{
     BybitOrderSide, BybitOrderType, BybitPrivateClient, BybitRestClient, BybitTimeInForce,
 };
 pub use client::{Credentials, KuCoinClient};
+#[cfg(feature = "coinbase")]
+pub use coinbase::{CoinbaseChannel, CoinbaseConnector};
 pub use connectors::{ExchangeConfig, KuCoin, KucoinEnv};
 #[cfg(feature = "cryptocom")]
 pub use cryptocom::{
@@ -132,6 +138,8 @@ pub use error::{ExchangeError, Result};
 pub use http::PublicRestClient;
 #[cfg(feature = "kraken")]
 pub use kraken::{KrakenConnector, KrakenCredentials, KrakenPrivateClient, KrakenRestClient};
+#[cfg(feature = "okx")]
+pub use okx::{OkxChannel, OkxConnector};
 pub use types::{Candle, OrderType, STP, Side, TimeInForce};
 
 // ── WS convenience re-exports ─────────────────────────────────────────────────
