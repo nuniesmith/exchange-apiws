@@ -6,7 +6,15 @@ and the project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.
 
 ## [Unreleased]
 
-— nothing yet —
+### Added
+
+- **Per-execution match details on `OrderUpdate`** (KuCoin private `tradeOrders`
+  feed) — new `match_price: Option<f64>`, `match_size: Option<u32>`, and
+  `trade_id: Option<String>` fields, populated from `matchPrice` / `matchSize` /
+  `tradeId` on `type:"match"` events (`None` on other event types). This lets a
+  consumer read the **true per-fill price** directly off the feed — the order
+  `price` is `0.0` for market orders — so a `FillSource` no longer needs a
+  `/recentFills` REST hydration to recover fill prices. Additive.
 
 ## [0.5.0] – 2026-06-01
 

@@ -304,6 +304,15 @@ pub struct OrderUpdate {
     pub remaining_size: u32,
     /// Cumulative fee charged for fills so far.
     pub fee: f64,
+    /// Per-execution **match price** — the actual fill price for this execution.
+    /// `Some` only on `type:"match"` events; `None` otherwise. Carries the true
+    /// fill price even for market orders, where [`price`](Self::price) is `0.0`.
+    pub match_price: Option<f64>,
+    /// Per-execution **match size**, in contracts. `Some` only on `match` events.
+    pub match_size: Option<u32>,
+    /// Exchange trade id for this execution. `Some` only on `match` events — a
+    /// stable key for de-duplicating fills off the feed.
+    pub trade_id: Option<String>,
     /// Exchange timestamp in milliseconds.
     pub exchange_ts: i64,
     /// Local receipt timestamp in milliseconds.
