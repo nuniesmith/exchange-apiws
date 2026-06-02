@@ -721,8 +721,8 @@ mod tests {
             "ts": 1_700_000_000_000_000_000i64,
         });
         let u = order_update(&data);
-        assert_eq!(u.price, 0.0); // market order: no limit price
-        assert_eq!(u.match_price, Some(65000.5));
+        assert!(u.price.abs() < 1e-9); // market order: no limit price
+        assert!((u.match_price.expect("match_price present") - 65000.5).abs() < 1e-9);
         assert_eq!(u.match_size, Some(5));
         assert_eq!(u.trade_id.as_deref(), Some("t-abc"));
         assert_eq!(u.exchange_ts, 1_700_000_000_000); // ns → ms
