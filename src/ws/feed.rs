@@ -353,6 +353,29 @@ fn str_u32(data: &Value, key: &str) -> u32 {
         .unwrap_or(0)
 }
 
+/// Like [`str_f64`] but `None` when the field is absent or unparseable — for
+/// fields (e.g. `matchPrice`) that only appear on some event types.
+fn str_f64_opt(data: &Value, key: &str) -> Option<f64> {
+    data.get(key).and_then(|v| {
+        if let Some(s) = v.as_str() {
+            s.parse().ok()
+        } else {
+            v.as_f64()
+        }
+    })
+}
+
+/// Like [`str_u32`] but `None` when the field is absent or unparseable.
+fn str_u32_opt(data: &Value, key: &str) -> Option<u32> {
+    data.get(key).and_then(|v| {
+        if let Some(s) = v.as_str() {
+            s.parse().ok()
+        } else {
+            v.as_u64().map(|n| n as u32)
+        }
+    })
+}
+
 /// Try multiple field names in order, returning the first non-zero value.
 fn first_f64(data: &Value, keys: &[&str]) -> f64 {
     for key in keys {
@@ -527,6 +550,10 @@ fn parse_order_update(exchange: &str, data: &Value) -> Vec<DataMessage> {
         filled_size: str_u32(data, "filledSize"),
         remaining_size: str_u32(data, "remainSize"),
         fee: str_f64(data, "fee"),
+        // Per-execution match details — present only on `type:"match"` events.
+        match_price: str_f64_opt(data, "matchPrice"),
+        match_size: str_u32_opt(data, "matchSize"),
+        trade_id: data["tradeId"].as_str().map(str::to_string),
         exchange_ts,
         receipt_ts: chrono::Utc::now().timestamp_millis(),
     })]
@@ -659,4 +686,64 @@ fn parse_advanced_order_update(exchange: &str, data: &Value) -> Vec<DataMessage>
         exchange_ts,
         receipt_ts: chrono::Utc::now().timestamp_millis(),
     })]
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::json;
+
+    fn order_update(data: &Value) -> OrderUpdate {
+        match parse_order_update("kucoin", data).into_iter().next() {
+            Some(DataMessage::OrderUpdate(u)) => u,
+            other => panic!("expected one OrderUpdate, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn match_event_carries_per_execution_fill_price() {
+        // A KuCoin `tradeOrders` `match` event for a MARKET order: the order
+        // `price` is "0", but the execution price/size live in matchPrice/matchSize.
+        let data = json!({
+            "symbol": "XBTUSDTM",
+            "orderId": "o-1",
+            "type": "match",
+            "status": "match",
+            "side": "buy",
+            "price": "0",
+            "size": "5",
+            "filledSize": "5",
+            "remainSize": "0",
+            "matchPrice": "65000.5",
+            "matchSize": "5",
+            "tradeId": "t-abc",
+            "fee": "0.12",
+            "ts": 1_700_000_000_000_000_000i64,
+        });
+        let u = order_update(&data);
+        assert_eq!(u.price, 0.0); // market order: no limit price
+        assert_eq!(u.match_price, Some(65000.5));
+        assert_eq!(u.match_size, Some(5));
+        assert_eq!(u.trade_id.as_deref(), Some("t-abc"));
+        assert_eq!(u.exchange_ts, 1_700_000_000_000); // ns → ms
+    }
+
+    #[test]
+    fn non_match_event_has_no_match_fields() {
+        let data = json!({
+            "symbol": "XBTUSDTM",
+            "orderId": "o-2",
+            "type": "open",
+            "status": "open",
+            "side": "sell",
+            "price": "65010",
+            "size": "3",
+            "filledSize": "0",
+            "remainSize": "3",
+        });
+        let u = order_update(&data);
+        assert_eq!(u.match_price, None);
+        assert_eq!(u.match_size, None);
+        assert_eq!(u.trade_id, None);
+    }
 }
