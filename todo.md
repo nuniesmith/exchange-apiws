@@ -97,11 +97,10 @@ The headline functional work. Each exchange already has a public client
       query order, open orders, all orders, my trades; USDT-M futures
       account/position/leverage/order. New `BinanceCredentials`
       (`BINANCE_API_KEY`/`SECRET`, `ZeroizeOnDrop`).
-- [ ] **B2 — Bybit private REST** (`src/bybit/private.rs`). v5 signing:
-      HMAC-SHA256 over `timestamp + api_key + recv_window + body`, sent
-      as `X-BAPI-*` headers. Endpoints: wallet balance, place/amend/
-      cancel/cancel-all order, open + history orders, positions, set
-      leverage, execution list. New `BybitCredentials`.
+- [x] **B2 — Bybit private REST — done (0.4.0).** `BybitPrivateClient`
+      (`src/bybit/private.rs`) ships v5 HMAC-SHA256 `X-BAPI-*` signing + wallet
+      balance, place/amend/cancel/cancel-all, open/history orders, positions, set
+      leverage, execution list; `BybitCredentials` + `examples/bybit_private_trading.rs`.
 - [ ] **B3 — Type Crypto.com private responses.** All 10 methods in
       `src/cryptocom/private.rs` return `serde_json::Value`. Type the
       high-traffic ones first (`get-account-summary`, `create-order`,
@@ -204,10 +203,12 @@ The headline functional work. Each exchange already has a public client
 Architecture supports it — implement `ExchangeConnector` + REST client +
 envelope unwrap. Roughly decreasing demand:
 
-- [ ] **H1 — OKX** (`{"code":"0","data":[…]}` envelope; HMAC-SHA256
-      with passphrase).
-- [ ] **H2 — Coinbase Advanced Trade** (ECDSA/JWT signing — a new
-      scheme for the crate).
+- [ ] **H1 — OKX** — **public WS done (0.5.0)** (`OkxConnector`: trades/tickers/books).
+      Remaining: the signed REST/private surface (`{"code":"0","data":[…]}` envelope;
+      HMAC-SHA256 with passphrase).
+- [ ] **H2 — Coinbase Advanced Trade** — **public WS done (0.5.0)** (`CoinbaseConnector`:
+      ticker/trades/level2). Remaining: the signed surface (ECDSA/JWT — a new scheme
+      for the crate).
 - [ ] **H3 — Hyperliquid** (on-chain perp DEX; EIP-712 signing).
 - [ ] **H4 — Gate.io / MEXC / Bitget** as demand warrants.
 

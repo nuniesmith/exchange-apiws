@@ -50,7 +50,7 @@ example below](#supervised-websocket-feed-token-re-negotiation-on-cascade).
 
 ## Status
 
-Everything in the original roadmap is implemented. 305 tests across the
+Everything in the original roadmap is implemented. 329 tests across the
 crate cover signing, envelope unwrapping, WS connector parsers, and the
 runner lifecycle (reconnect, supervised token refresh, idle timeout,
 event observability).
