@@ -15,6 +15,12 @@ and the project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.
   consumer read the **true per-fill price** directly off the feed — the order
   `price` is `0.0` for market orders — so a `FillSource` no longer needs a
   `/recentFills` REST hydration to recover fill prices. Additive.
+- **Bybit v5 private WebSocket** (`BybitPrivateConnector`) — authenticates with a
+  post-connect `op:"auth"` frame and subscribes to the `order` + `execution`
+  topics, normalising both into `DataMessage::OrderUpdate` (executions carry the
+  true `match_price` / `match_size` / `trade_id`). Adds an additive
+  `ExchangeConnector::auth_message()` hook (default `None`) so the WS runner
+  sends the auth frame before subscribing — public connectors are unaffected.
 
 ## [0.5.0] – 2026-06-01
 

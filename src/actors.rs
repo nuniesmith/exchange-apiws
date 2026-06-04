@@ -259,6 +259,16 @@ pub trait ExchangeConnector: Send + Sync {
         None
     }
 
+    /// Optional JSON auth frame sent once, right after connect and **before**
+    /// the subscription. For private streams that authenticate with a
+    /// post-connect frame (e.g. Bybit v5's `op:"auth"`). Public connectors, and
+    /// those that authenticate via a URL token (e.g. KuCoin), return `None`.
+    ///
+    /// Default returns `None` — no auth frame.
+    fn auth_message(&self) -> Option<String> {
+        None
+    }
+
     /// Optional inbound-driven response — given the raw text of an
     /// incoming frame, return a JSON frame the runner should send back
     /// before delivering parsed `DataMessage`s upstream.

@@ -124,7 +124,8 @@ pub use binance::{BinanceConnector, BinanceRestClient};
 #[cfg(feature = "bybit")]
 pub use bybit::{
     BybitCategory, BybitConnector, BybitCredentials, BybitOrderAck, BybitOrderRequest,
-    BybitOrderSide, BybitOrderType, BybitPrivateClient, BybitRestClient, BybitTimeInForce,
+    BybitOrderSide, BybitOrderType, BybitPrivateClient, BybitPrivateConnector, BybitRestClient,
+    BybitTimeInForce,
 };
 pub use client::{Credentials, KuCoinClient};
 #[cfg(feature = "coinbase")]
