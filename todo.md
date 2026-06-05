@@ -45,10 +45,10 @@ user-data stream (fills/positions) so janus's Bybit path is trade-aware.
 > surface, not the publish.
 
 1. **Other venues' private WS user-data streams.** Bybit (C3 — order /
-   execution / position / wallet) and Binance (C2 — user-data: `executionReport`
-   / `outboundAccountPosition`) are **done**, so both feeds are account-aware for
-   the FKS brain / janus's `bybit_compat`. The remaining gaps are Kraken (C1) and
-   Crypto.com (C4).
+   execution / position / wallet), Binance (C2 — user-data: `executionReport`
+   / `outboundAccountPosition`), and Crypto.com (C4 — `user.order` / `user.trade`
+   / `user.balance`) are **done**, so those feeds are account-aware for the FKS
+   brain / janus's `bybit_compat`. The remaining gap is **Kraken (C1)**.
    → [C](#c-private-websocket--ws-order-entry)
 
 2. **Binance private REST** (signed account / orders /
@@ -133,9 +133,12 @@ The headline functional work. Each exchange already has a public client
       match_price/size/trade_id), `position` → `PositionChange`, and `wallet`
       → `BalanceUpdate` (one per coin, account-type in `event`). Driven by the
       additive `ExchangeConnector::auth_message()` hook.
-- [ ] **C4 — Crypto.com user channel.** `user.order`, `user.trade`,
-      `user.balance` over the existing `…/user` URL; auth via the
-      body-`sig` scheme already in `src/cryptocom/auth.rs`.
+- [x] **C4 — Crypto.com user channel.** `CryptocomUserConnector` over the
+      `…/v1/user` URL: signed `public/auth` frame (`auth_message()` hook reusing
+      `sign_cryptocom_request`) then `user.order` / `user.trade` → `OrderUpdate`
+      (trades carry match_price/size/trade_id) and `user.balance` →
+      `BalanceUpdate` (one per `position_balances`). Server heartbeats answered
+      via `response_for`. v1 field names with fallbacks for alternate spellings.
 - [ ] **C5 — WS order entry beyond KuCoin.** Generalize `WsOrderClient`
       (`src/ws/orders.rs`) — Binance, Bybit, and Kraken all support
       order placement over WS. Extract the clientOid↔oneshot

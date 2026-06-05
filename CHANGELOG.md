@@ -34,6 +34,14 @@ and the project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.
   `match_price` / `match_size` / `trade_id`) and `outboundAccountPosition` →
   `DataMessage::BalanceUpdate` (one per asset). Keepalive *scheduling* is the
   caller's responsibility; signed account/order REST remains out of scope.
+- **Crypto.com user (private) WebSocket** (`CryptocomUserConnector`, `cryptocom`
+  feature) — authenticates with a signed `public/auth` frame (reusing
+  `sign_cryptocom_request` and the `ExchangeConnector::auth_message()` hook),
+  subscribes to `user.order` / `user.trade` / `user.balance`, and normalises them
+  into `DataMessage::OrderUpdate` (trades carry `match_price` / `match_size` /
+  `trade_id`) and `DataMessage::BalanceUpdate` (one per `position_balances`
+  entry). Replies to server `public/heartbeat` via `response_for`. Field parsing
+  follows the Exchange API v1 schema with fallbacks for v1's alternate spellings.
 
 ## [0.5.0] – 2026-06-01
 

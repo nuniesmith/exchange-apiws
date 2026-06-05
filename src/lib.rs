@@ -136,6 +136,7 @@ pub use connectors::{ExchangeConfig, KuCoin, KucoinEnv};
 #[cfg(feature = "cryptocom")]
 pub use cryptocom::{
     CryptocomConnector, CryptocomCredentials, CryptocomPrivateClient, CryptocomRestClient,
+    CryptocomUserConnector,
 };
 pub use error::{ExchangeError, Result};
 pub use http::PublicRestClient;
@@ -213,6 +214,7 @@ pub mod prelude {
     #[cfg(feature = "cryptocom")]
     pub use crate::cryptocom::{
         CryptocomConnector, CryptocomCredentials, CryptocomPrivateClient, CryptocomRestClient,
+        CryptocomUserConnector,
     };
     #[cfg(feature = "kraken")]
     pub use crate::kraken::{
