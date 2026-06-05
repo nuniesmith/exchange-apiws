@@ -1,5 +1,5 @@
-//! Crypto.com integration — public REST, private REST (signed), WS in
-//! follow-up.
+//! Crypto.com integration — public REST + WS, private REST (signed), and the
+//! private user WebSocket ([`CryptocomUserConnector`]: order / trade / balance).
 //!
 //! Crypto.com's API splits into an **unauthenticated public** side
 //! (market data — [`CryptocomRestClient`]) and an **authenticated
@@ -11,11 +11,13 @@
 
 pub mod auth;
 pub mod private;
+pub mod private_ws;
 pub mod rest;
 pub mod ws;
 
 pub use auth::{CryptocomCredentials, build_params_string, sign_cryptocom_request};
 pub use private::CryptocomPrivateClient;
+pub use private_ws::CryptocomUserConnector;
 pub use rest::{
     CryptocomCandle, CryptocomInstrument, CryptocomOrderBook, CryptocomRestClient, CryptocomTicker,
     CryptocomTrade, CryptocomValuation, unwrap_cryptocom_envelope,
