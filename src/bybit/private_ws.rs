@@ -1,10 +1,19 @@
-//! Bybit v5 **private** WebSocket connector — order & execution streams.
+//! Bybit v5 **private** WebSocket connector — order, execution, position &
+//! wallet streams.
 //!
 //! Authenticates with an `auth` op frame (HMAC-SHA256 over `"GET/realtime" +
 //! expires`, see [`BybitCredentials::sign_ws`]) sent right after connect — the
 //! WS runner drives this via [`ExchangeConnector::auth_message`], before the
-//! subscription — then subscribes to the private `order` and `execution` topics
-//! and normalises both into [`DataMessage::OrderUpdate`].
+//! subscription — then subscribes to the private `order`, `execution`,
+//! `position` and `wallet` topics and normalises each into the matching
+//! [`DataMessage`] variant:
+//!
+//! | Topic | Variant | Notes |
+//! |-------|---------|-------|
+//! | `order` | [`DataMessage::OrderUpdate`] | order *state* (no per-fill detail) |
+//! | `execution` | [`DataMessage::OrderUpdate`] | individual fills (match price/size/id) |
+//! | `position` | [`DataMessage::PositionChange`] | one per position element |
+//! | `wallet` | [`DataMessage::BalanceUpdate`] | one per coin in each account |
 //!
 //! Bybit reports order *state* on the `order` topic and individual fills on the
 //! `execution` topic. Fills carry the true match price/size, surfaced via
@@ -20,20 +29,32 @@
 //! truncated here. The fill price is always exact via `match_price`; widening
 //! the `OrderUpdate` size fields to `f64` is a separate (breaking) change.
 //!
+//! [`PositionChange::current_qty`] is `i32` and shares this truncation caveat —
+//! Bybit's unsigned `size` string is signed here by the position `side` (`Buy`
+//! positive, `Sell` negative, empty/`None` → flat). [`BalanceUpdate`] maps the
+//! per-coin `availableToWithdraw` / `locked` fields; note that *UNIFIED*
+//! accounts report availability at the account level, so per-coin
+//! `availableToWithdraw` can be empty (→ `0.0`) there, whereas *CONTRACT*
+//! (inverse) accounts populate it.
+//!
 //! ```no_run
 //! # use exchange_apiws::bybit::{BybitCredentials, BybitPrivateConnector};
 //! # async fn example() -> exchange_apiws::Result<()> {
 //! let creds = BybitCredentials::from_env()?;
 //! let connector = BybitPrivateConnector::new(creds);
 //! // hand `connector` to the WS runner; it sends the auth frame, subscribes to
-//! // `order` + `execution`, and emits `DataMessage::OrderUpdate`s.
+//! // `order` + `execution` + `position` + `wallet`, and emits the matching
+//! // `DataMessage` variants.
 //! # Ok(())
 //! # }
 //! ```
 
 use serde_json::Value;
 
-use crate::actors::{DataMessage, ExchangeConnector, OrderUpdate, TradeSide, WebSocketConfig};
+use crate::actors::{
+    BalanceUpdate, DataMessage, ExchangeConnector, OrderUpdate, PositionChange, TradeSide,
+    WebSocketConfig,
+};
 use crate::bybit::auth::BybitCredentials;
 use crate::error::Result;
 
@@ -41,11 +62,12 @@ const EXCHANGE_NAME: &str = "bybit";
 const WS_PRIVATE_BASE: &str = "wss://stream.bybit.com/v5/private";
 const PING_INTERVAL_SECS: u64 = 20;
 /// Private topics this connector subscribes to on connect.
-const PRIVATE_TOPICS: [&str; 2] = ["order", "execution"];
+const PRIVATE_TOPICS: [&str; 4] = ["order", "execution", "position", "wallet"];
 /// How far ahead (ms) the `auth` frame's `expires` deadline is set.
 const AUTH_EXPIRY_MS: u64 = 5_000;
 
-/// Bybit v5 private WebSocket connector: order + execution → `OrderUpdate`.
+/// Bybit v5 private WebSocket connector: `order` + `execution` → `OrderUpdate`,
+/// `position` → `PositionChange`, `wallet` → `BalanceUpdate`.
 pub struct BybitPrivateConnector {
     credentials: BybitCredentials,
     url: String,
@@ -101,7 +123,8 @@ impl ExchangeConnector for BybitPrivateConnector {
         }
     }
 
-    /// `{"op":"subscribe","args":["order","execution"]}` — the private streams.
+    /// `{"op":"subscribe","args":["order","execution","position","wallet"]}` —
+    /// the private streams.
     fn subscription_message(&self, _symbol: &str) -> Option<String> {
         serde_json::to_string(&serde_json::json!({
             "op": "subscribe",
@@ -134,6 +157,9 @@ impl ExchangeConnector for BybitPrivateConnector {
         let Some(data) = json.get("data").and_then(Value::as_array) else {
             return Ok(vec![]);
         };
+        // The `wallet` frame stamps its time once at the top level (`creationTime`,
+        // a JSON number) — the per-coin rows carry no timestamp of their own.
+        let creation_ts = i64_any(&json, "creationTime");
 
         let out = match topic {
             "order" => data
@@ -145,6 +171,17 @@ impl ExchangeConnector for BybitPrivateConnector {
                 .iter()
                 .filter_map(parse_execution)
                 .map(DataMessage::OrderUpdate)
+                .collect(),
+            "position" => data
+                .iter()
+                .filter_map(parse_position)
+                .map(DataMessage::PositionChange)
+                .collect(),
+            // Each account element fans out to one BalanceUpdate per coin.
+            "wallet" => data
+                .iter()
+                .flat_map(|acct| parse_wallet(acct, creation_ts))
+                .map(DataMessage::BalanceUpdate)
                 .collect(),
             _ => vec![],
         };
@@ -204,6 +241,62 @@ fn parse_execution(d: &Value) -> Option<OrderUpdate> {
     })
 }
 
+/// Parse one Bybit v5 `position`-topic element into a [`PositionChange`].
+///
+/// Bybit's `size` is unsigned and conveys direction in `side` (`"Buy"` /
+/// `"Sell"`, or `""` / `"None"` when flat) — the contract count is signed
+/// accordingly. There is no dedicated change-reason field, so `positionStatus`
+/// (`"Normal"` / `"Liq"` / `"Adl"`) stands in, defaulting to `"positionChange"`.
+fn parse_position(d: &Value) -> Option<PositionChange> {
+    let symbol = d.get("symbol")?.as_str()?.to_string();
+    let magnitude = str_f64(d, "size") as i32;
+    let current_qty = match d.get("side").and_then(Value::as_str).unwrap_or("") {
+        s if s.eq_ignore_ascii_case("sell") => -magnitude,
+        s if s.eq_ignore_ascii_case("buy") => magnitude,
+        _ => 0, // flat: "" / "None"
+    };
+    Some(PositionChange {
+        symbol,
+        exchange: EXCHANGE_NAME.to_string(),
+        current_qty,
+        avg_entry_price: str_f64(d, "entryPrice"),
+        unrealised_pnl: str_f64(d, "unrealisedPnl"),
+        realised_pnl: str_f64(d, "cumRealisedPnl"),
+        change_reason: nonempty(str_field(d, "positionStatus"))
+            .unwrap_or_else(|| "positionChange".to_string()),
+        exchange_ts: str_i64(d, "updatedTime").unwrap_or_else(now_ms),
+        receipt_ts: now_ms(),
+    })
+}
+
+/// Parse one Bybit v5 `wallet`-topic account element into one [`BalanceUpdate`]
+/// per coin. `creation_ts` is the frame-level `creationTime` (ms); the per-coin
+/// rows carry no timestamp. The `event` tag is set to the account type
+/// (`"UNIFIED"` / `"CONTRACT"` …) for context.
+fn parse_wallet(acct: &Value, creation_ts: Option<i64>) -> Vec<BalanceUpdate> {
+    let event = nonempty(str_field(acct, "accountType")).unwrap_or_else(|| "wallet".to_string());
+    let exchange_ts = creation_ts.unwrap_or_else(now_ms);
+    let receipt_ts = now_ms();
+    let Some(coins) = acct.get("coin").and_then(Value::as_array) else {
+        return vec![];
+    };
+    coins
+        .iter()
+        .filter_map(|c| {
+            let currency = nonempty(str_field(c, "coin"))?;
+            Some(BalanceUpdate {
+                exchange: EXCHANGE_NAME.to_string(),
+                currency,
+                available_balance: str_f64(c, "availableToWithdraw"),
+                hold_balance: str_f64(c, "locked"),
+                event: event.clone(),
+                exchange_ts,
+                receipt_ts,
+            })
+        })
+        .collect()
+}
+
 fn now_ms() -> i64 {
     chrono::Utc::now().timestamp_millis()
 }
@@ -227,6 +320,16 @@ fn str_i64(d: &Value, key: &str) -> Option<i64> {
     d.get(key)
         .and_then(Value::as_str)
         .and_then(|s| s.parse().ok())
+}
+
+/// Read an i64 that may arrive as a JSON number *or* a numeric string. Bybit
+/// stamps `creationTime` as a number on the `wallet` frame, unlike the
+/// string-typed per-element time fields (`updatedTime` / `execTime`).
+fn i64_any(d: &Value, key: &str) -> Option<i64> {
+    d.get(key).and_then(|v| {
+        v.as_i64()
+            .or_else(|| v.as_str().and_then(|s| s.parse().ok()))
+    })
 }
 
 fn side_of(d: &Value) -> TradeSide {
@@ -281,7 +384,7 @@ mod tests {
     }
 
     #[test]
-    fn subscription_is_order_and_execution() {
+    fn subscription_is_all_four_private_topics() {
         let c = connector();
         let v: Value = serde_json::from_str(&c.subscription_message("").unwrap()).unwrap();
         assert_eq!(v["op"], "subscribe");
@@ -291,7 +394,7 @@ mod tests {
             .iter()
             .map(|a| a.as_str().unwrap())
             .collect();
-        assert_eq!(args, vec!["order", "execution"]);
+        assert_eq!(args, vec!["order", "execution", "position", "wallet"]);
     }
 
     #[test]
@@ -374,9 +477,89 @@ mod tests {
     }
 
     #[test]
+    fn parses_position_topic_into_position_change() {
+        let c = connector();
+        let raw = r#"{
+            "topic":"position",
+            "creationTime":1700000010000,
+            "data":[{
+                "symbol":"BTCUSD","side":"Sell","size":"150",
+                "entryPrice":"29850.5","unrealisedPnl":"-12.5",
+                "cumRealisedPnl":"340.25","positionStatus":"Normal",
+                "updatedTime":"1700000009000"
+            }]
+        }"#;
+        let msgs = c.parse_message(raw).unwrap();
+        assert_eq!(msgs.len(), 1);
+        let DataMessage::PositionChange(p) = &msgs[0] else {
+            panic!("expected PositionChange, got {:?}", msgs[0]);
+        };
+        assert_eq!(p.symbol, "BTCUSD");
+        assert_eq!(p.exchange, "bybit");
+        // Short position: unsigned size 150 signed negative by side=Sell.
+        assert_eq!(p.current_qty, -150);
+        assert!((p.avg_entry_price - 29850.5).abs() < 1e-9);
+        assert!((p.unrealised_pnl + 12.5).abs() < 1e-9);
+        assert!((p.realised_pnl - 340.25).abs() < 1e-9);
+        assert_eq!(p.change_reason, "Normal");
+        assert_eq!(p.exchange_ts, 1_700_000_009_000);
+    }
+
+    #[test]
+    fn flat_position_has_zero_qty_and_default_reason() {
+        let c = connector();
+        // Bybit reports an empty `side` once a position is closed, and the
+        // `position` frame omits `positionStatus` in some pushes.
+        let raw = r#"{"topic":"position","data":[{
+            "symbol":"BTCUSD","side":"","size":"0","entryPrice":"0",
+            "unrealisedPnl":"0","cumRealisedPnl":"5.0","updatedTime":"1700000009000"
+        }]}"#;
+        let DataMessage::PositionChange(p) = &c.parse_message(raw).unwrap()[0] else {
+            panic!("expected PositionChange");
+        };
+        assert_eq!(p.current_qty, 0);
+        assert_eq!(p.change_reason, "positionChange");
+    }
+
+    #[test]
+    fn parses_wallet_topic_into_one_balance_update_per_coin() {
+        let c = connector();
+        // One account element with two coins → two BalanceUpdates, both stamped
+        // with the frame-level numeric `creationTime`.
+        let raw = r#"{
+            "topic":"wallet",
+            "creationTime":1700000020000,
+            "data":[{
+                "accountType":"CONTRACT",
+                "coin":[
+                    {"coin":"USDT","availableToWithdraw":"1000.5","locked":"250.25"},
+                    {"coin":"BTC","availableToWithdraw":"0.5","locked":"0"}
+                ]
+            }]
+        }"#;
+        let msgs = c.parse_message(raw).unwrap();
+        assert_eq!(msgs.len(), 2);
+        let DataMessage::BalanceUpdate(usdt) = &msgs[0] else {
+            panic!("expected BalanceUpdate, got {:?}", msgs[0]);
+        };
+        assert_eq!(usdt.exchange, "bybit");
+        assert_eq!(usdt.currency, "USDT");
+        assert!((usdt.available_balance - 1000.5).abs() < 1e-9);
+        assert!((usdt.hold_balance - 250.25).abs() < 1e-9);
+        assert_eq!(usdt.event, "CONTRACT", "event carries the account type");
+        assert_eq!(usdt.exchange_ts, 1_700_000_020_000);
+        let DataMessage::BalanceUpdate(btc) = &msgs[1] else {
+            panic!("expected BalanceUpdate");
+        };
+        assert_eq!(btc.currency, "BTC");
+        assert!((btc.available_balance - 0.5).abs() < 1e-9);
+    }
+
+    #[test]
     fn unknown_topic_is_ignored() {
         let c = connector();
-        let raw = r#"{"topic":"wallet","data":[{"coin":"USDT"}]}"#;
+        // `greeks` (options portfolio greeks) is a real private topic we don't map.
+        let raw = r#"{"topic":"greeks","data":[{"baseCoin":"BTC"}]}"#;
         assert!(c.parse_message(raw).unwrap().is_empty());
     }
 }

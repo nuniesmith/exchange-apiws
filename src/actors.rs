@@ -331,7 +331,8 @@ pub struct OrderUpdate {
 
 /// A position-change event from the private feed.
 ///
-/// Emitted on `/contract/position:{symbol}` (Futures).
+/// Emitted by KuCoin's `/contract/position:{symbol}` and Bybit's `position`
+/// topic (Futures).
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PositionChange {
     /// Instrument symbol.
@@ -356,7 +357,8 @@ pub struct PositionChange {
 
 /// A balance or margin update from the private feed.
 ///
-/// Emitted on `/contractAccount/wallet` (Futures).
+/// Emitted by KuCoin's `/contractAccount/wallet` and Bybit's `wallet` topic
+/// (one [`BalanceUpdate`] per coin).
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct BalanceUpdate {
     /// Exchange identifier.
