@@ -25,6 +25,15 @@ and the project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.
   additive `ExchangeConnector::auth_message()` hook (default `None`) so the WS
   runner sends the auth frame before subscribing — public connectors are
   unaffected.
+- **Binance spot user-data stream** — the first authenticated Binance surface,
+  behind the existing `binance` feature. `BinanceUserDataRest` drives the
+  `listenKey` lifecycle (`create_listen_key` / `keepalive_listen_key` /
+  `close_listen_key`; `X-MBX-APIKEY` header only — no HMAC signature), and
+  `BinanceUserDataConnector` streams `/ws/<listenKey>` (no subscription frame),
+  normalising `executionReport` → `DataMessage::OrderUpdate` (fills carry
+  `match_price` / `match_size` / `trade_id`) and `outboundAccountPosition` →
+  `DataMessage::BalanceUpdate` (one per asset). Keepalive *scheduling* is the
+  caller's responsibility; signed account/order REST remains out of scope.
 
 ## [0.5.0] – 2026-06-01
 

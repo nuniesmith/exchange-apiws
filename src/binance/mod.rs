@@ -1,14 +1,18 @@
-//! Binance integration — public REST and public WebSocket.
+//! Binance integration — public market data plus the spot **user-data** stream.
 //!
-//! No API keys are required: every endpoint and stream exposed here is
-//! unauthenticated. Authenticated channels (user-data, account, orders)
-//! are intentionally out of scope — this crate is a market-data and
-//! infrastructure library for exchanges where the user has either no keys
-//! or only public access.
+//! Public REST endpoints and market WebSocket streams need no credentials. The
+//! spot user-data stream — [`BinanceUserDataConnector`] over the WS, fed by the
+//! [`BinanceUserDataRest`] `listenKey` lifecycle — authenticates with an API
+//! key (the listenKey endpoints need no HMAC signature). Signed account/order
+//! REST remains out of scope here.
 
+pub mod private_rest;
+pub mod private_ws;
 pub mod rest;
 pub mod ws;
 
+pub use private_rest::BinanceUserDataRest;
+pub use private_ws::BinanceUserDataConnector;
 pub use rest::{
     BinanceBookTicker, BinanceFundingRate, BinanceKline, BinanceMarkPrice, BinanceOpenInterest,
     BinanceOrderBook, BinanceRestClient, BinanceTicker24h, BinanceTrade,
