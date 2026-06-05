@@ -341,18 +341,6 @@ fn str_f64(data: &Value, key: &str) -> f64 {
         .unwrap_or(0.0)
 }
 
-fn str_u32(data: &Value, key: &str) -> u32 {
-    data.get(key)
-        .and_then(|v| {
-            if let Some(s) = v.as_str() {
-                s.parse().ok()
-            } else {
-                v.as_u64().map(|n| n as u32)
-            }
-        })
-        .unwrap_or(0)
-}
-
 /// Like [`str_f64`] but `None` when the field is absent or unparseable — for
 /// fields (e.g. `matchPrice`) that only appear on some event types.
 fn str_f64_opt(data: &Value, key: &str) -> Option<f64> {
@@ -361,17 +349,6 @@ fn str_f64_opt(data: &Value, key: &str) -> Option<f64> {
             s.parse().ok()
         } else {
             v.as_f64()
-        }
-    })
-}
-
-/// Like [`str_u32`] but `None` when the field is absent or unparseable.
-fn str_u32_opt(data: &Value, key: &str) -> Option<u32> {
-    data.get(key).and_then(|v| {
-        if let Some(s) = v.as_str() {
-            s.parse().ok()
-        } else {
-            v.as_u64().map(|n| n as u32)
         }
     })
 }
@@ -546,13 +523,13 @@ fn parse_order_update(exchange: &str, data: &Value) -> Vec<DataMessage> {
         order_type: data["type"].as_str().unwrap_or("market").to_string(),
         status: data["status"].as_str().unwrap_or("").to_string(),
         price: str_f64(data, "price"),
-        size: str_u32(data, "size"),
-        filled_size: str_u32(data, "filledSize"),
-        remaining_size: str_u32(data, "remainSize"),
+        size: str_f64(data, "size"),
+        filled_size: str_f64(data, "filledSize"),
+        remaining_size: str_f64(data, "remainSize"),
         fee: str_f64(data, "fee"),
         // Per-execution match details — present only on `type:"match"` events.
         match_price: str_f64_opt(data, "matchPrice"),
-        match_size: str_u32_opt(data, "matchSize"),
+        match_size: str_f64_opt(data, "matchSize"),
         trade_id: data["tradeId"].as_str().map(str::to_string),
         exchange_ts,
         receipt_ts: chrono::Utc::now().timestamp_millis(),
@@ -682,7 +659,7 @@ fn parse_advanced_order_update(exchange: &str, data: &Value) -> Vec<DataMessage>
         stop: data["stop"].as_str().map(str::to_string),
         stop_price,
         price,
-        size: str_u32(data, "size"),
+        size: str_f64(data, "size"),
         exchange_ts,
         receipt_ts: chrono::Utc::now().timestamp_millis(),
     })]
@@ -723,7 +700,7 @@ mod tests {
         let u = order_update(&data);
         assert!(u.price.abs() < 1e-9); // market order: no limit price
         assert!((u.match_price.expect("match_price present") - 65000.5).abs() < 1e-9);
-        assert_eq!(u.match_size, Some(5));
+        assert_eq!(u.match_size, Some(5.0));
         assert_eq!(u.trade_id.as_deref(), Some("t-abc"));
         assert_eq!(u.exchange_ts, 1_700_000_000_000); // ns → ms
     }

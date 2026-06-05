@@ -16,10 +16,10 @@ Per-exchange Cargo features. Runnable examples. README + CHANGELOG current.
 | Exchange | Public REST | Private REST | Public WS | Private WS | WS order entry |
 |---|---|---|---|---|---|
 | KuCoin     | ✓ | ✓ | ✓ | ✓ | ✓ |
-| Binance    | ✓ | — | ✓ | — | — |
-| Bybit      | ✓ | **✓ (0.4.0)** | ✓ | — | — |
-| Kraken     | ✓ | ✓ | ✓ | — | — |
-| Crypto.com | ✓ | ✓ | ✓ | — | — |
+| Binance    | ✓ | — | ✓ | **✓ (0.6.0)** | — |
+| Bybit      | ✓ | **✓ (0.4.0)** | ✓ | **✓ (0.6.0)** | — |
+| Kraken     | ✓ | ✓ | ✓ | **✓ (0.6.0)** | — |
+| Crypto.com | ✓ | ✓ | ✓ | **✓ (0.6.0)** | — |
 | Coinbase   | — | — | **✓ (0.5.0)** | — | — |
 | OKX        | — | — | **✓ (0.5.0)** | — | — |
 
@@ -29,12 +29,16 @@ Per-exchange Cargo features. Runnable examples. README + CHANGELOG current.
   wallet) + HMAC signing. Closed the "Bybit has no signed surface" gap.
 - **0.5.0** — Coinbase Advanced Trade + OKX v5 **public WS connectors**
   (trades/tickers/books → unified `DataMessage`).
+- **0.6.0** — **private WS user-data** for Bybit, Binance, Crypto.com & Kraken
+  (orders/fills/balances → `OrderUpdate` / `BalanceUpdate`), so every venue with
+  a private WS is now account-aware for janus's Bybit-compat path. Plus the
+  breaking `OrderUpdate`/`AdvancedOrderUpdate` quantity widening to `f64` (no
+  more fractional-size truncation).
 
-**Remaining gaps the matrix shows:** Binance still has no signed surface;
-Coinbase/OKX are WS-only (no REST/private); four venues have no private WS;
-only KuCoin places orders over WS. Those columns are the functional roadmap
-(Sections B/C/H below). Highest-value for the FKS brain: a Bybit **private WS**
-user-data stream (fills/positions) so janus's Bybit path is trade-aware.
+**Remaining gaps the matrix shows:** Binance still has no signed account/order
+REST; Coinbase/OKX are WS-only (no REST/private); only KuCoin places orders over
+WS — **C5** is the last open private-side item. Those columns are the functional
+roadmap (Sections B/C/H below).
 
 ---
 

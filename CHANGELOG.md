@@ -51,6 +51,17 @@ and the project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.
   `balances` → `DataMessage::BalanceUpdate` (one per asset; Kraken's v2 channel
   reports only the total, so `hold_balance` is `0.0`).
 
+### Changed
+
+- **BREAKING: `OrderUpdate` / `AdvancedOrderUpdate` quantities are now `f64`.**
+  `size`, `filled_size`, `remaining_size` (and `OrderUpdate::match_size`, now
+  `Option<f64>`) were `u32`, which silently **truncated fractional spot
+  quantities** (e.g. `0.5` BTC → `0`). Every connector (KuCoin, Bybit, Binance,
+  Crypto.com, Kraken) now emits exact quantities; the fill *price* was already
+  exact via `match_price`. Downstream consumers reading these fields as `u32`
+  must update. Integer-contract venues (e.g. Bybit inverse) are unaffected in
+  value. Warrants the `0.5.0` → `0.6.0` bump.
+
 ## [0.5.0] – 2026-06-01
 
 ### Added
