@@ -465,6 +465,17 @@ async fn single_session(
     let (mut write, mut read) = ws_stream.split();
     let mut guard = WsMsgGuard::new();
 
+    // Authenticate before subscribing, if the connector requires it (e.g. Bybit
+    // private streams send an `op:"auth"` frame post-connect, pre-subscribe).
+    if let Some(auth) = connector.auth_message() {
+        guard.check().await;
+        if let Err(e) = write.send(Message::Text(auth.into())).await {
+            warn!(error = %e, "failed to send auth frame");
+            return SessionOutcome::Disconnected;
+        }
+        debug!("sent private-WS auth frame");
+    }
+
     // Send all subscription messages before entering the recv loop.
     for sub in subscriptions {
         guard.check().await;

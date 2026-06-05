@@ -44,10 +44,11 @@ user-data stream (fills/positions) so janus's Bybit path is trade-aware.
 > publish-safe and used. The priority list below now leads with functional
 > surface, not the publish.
 
-1. **Bybit + the other venues' private WS user-data streams.** Bybit has signed
-   REST now (0.4.0) but no private WS — so a Bybit feed isn't *trade-aware*
-   (your own fills/positions/balances). This is the highest-value functional
-   gap for the FKS brain (janus's `bybit_compat` would consume it). → [C](#c-private-websocket--ws-order-entry)
+1. **Other venues' private WS user-data streams.** Bybit private WS is **done**
+   (C3 — `order` + `execution` → `OrderUpdate`, so a Bybit feed is now
+   trade-aware for the FKS brain / janus's `bybit_compat`). The remaining gaps
+   are Kraken / Binance / Crypto.com (C1/C2/C4) and Bybit `position`/`wallet`.
+   → [C](#c-private-websocket--ws-order-entry)
 
 2. **Binance private REST** (signed account / orders /
    positions). They're read-only today; for a *published* crate this is
@@ -123,9 +124,12 @@ The headline functional work. Each exchange already has a public client
       `wss://stream.binance.com/ws/<listenKey>`). Parse
       `executionReport` / `outboundAccountPosition` →
       `OrderUpdate` / `BalanceUpdate`.
-- [ ] **C3 — Bybit private WS** (`wss://stream.bybit.com/v5/private`).
-      Auth frame signed like B2; channels `order`, `execution`,
-      `position`, `wallet`.
+- [x] **C3 — Bybit private WS** (`wss://stream.bybit.com/v5/private`) —
+      `BybitPrivateConnector`: post-connect `op:"auth"` frame (signed like B2)
+      then `order` + `execution` → `OrderUpdate` (executions carry
+      match_price/size/trade_id). Driven by the new additive
+      `ExchangeConnector::auth_message()` hook. `position` / `wallet`
+      (→ `PositionChange` / `BalanceUpdate`) remain.
 - [ ] **C4 — Crypto.com user channel.** `user.order`, `user.trade`,
       `user.balance` over the existing `…/user` URL; auth via the
       body-`sig` scheme already in `src/cryptocom/auth.rs`.

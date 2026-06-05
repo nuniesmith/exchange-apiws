@@ -8,6 +8,7 @@
 
 pub mod auth;
 pub mod private;
+pub mod private_ws;
 pub mod rest;
 pub mod ws;
 
@@ -16,6 +17,7 @@ pub use private::{
     BybitOrderAck, BybitOrderRequest, BybitOrderSide, BybitOrderType, BybitPrivateClient,
     BybitTimeInForce,
 };
+pub use private_ws::BybitPrivateConnector;
 pub use rest::{
     BybitCategory, BybitFundingRate, BybitKline, BybitListResult, BybitLongShortRatio,
     BybitOpenInterest, BybitOrderBook, BybitRestClient, BybitTicker, BybitTrade,
