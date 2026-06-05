@@ -57,8 +57,8 @@
 use serde_json::{Value, json};
 
 use crate::actors::{
-    CandleData, DataMessage, ExchangeConnector, OrderBookData, TickerData, TradeData, TradeSide,
-    WebSocketConfig,
+    BalanceUpdate, CandleData, DataMessage, ExchangeConnector, OrderBookData, OrderUpdate,
+    TickerData, TradeData, TradeSide, WebSocketConfig,
 };
 use crate::error::Result;
 
@@ -158,6 +158,31 @@ impl KrakenConnector {
         })
         .to_string()
     }
+
+    /// Private `executions` channel — order state + fills →
+    /// [`DataMessage::OrderUpdate`]. `token` comes from
+    /// [`KrakenPrivateClient::get_websockets_token`](crate::kraken::KrakenPrivateClient::get_websockets_token);
+    /// subscribe on the [`private`](Self::private) endpoint.
+    #[must_use]
+    pub fn executions_subscription(token: &str) -> String {
+        json!({
+            "method": "subscribe",
+            "params": {"channel": "executions", "token": token},
+        })
+        .to_string()
+    }
+
+    /// Private `balances` channel — wallet balances →
+    /// [`DataMessage::BalanceUpdate`]. `token` as for
+    /// [`executions_subscription`](Self::executions_subscription).
+    #[must_use]
+    pub fn balances_subscription(token: &str) -> String {
+        json!({
+            "method": "subscribe",
+            "params": {"channel": "balances", "token": token},
+        })
+        .to_string()
+    }
 }
 
 // ── ExchangeConnector ────────────────────────────────────────────────────────
@@ -219,7 +244,9 @@ impl ExchangeConnector for KrakenConnector {
             "ticker" => Ok(parse_tickers(data)),
             "ohlc" => Ok(parse_klines(data)),
             "book" => Ok(parse_books(data, is_snapshot)),
-            // status, heartbeat (rare with data), executions, balances, …
+            "executions" => Ok(parse_executions(data)),
+            "balances" => Ok(parse_balances(data)),
+            // status, heartbeat (rare with data), …
             _ => Ok(vec![]),
         }
     }
@@ -241,6 +268,14 @@ fn iso_to_ms(s: &str) -> i64 {
 
 fn f64_field(v: &Value, key: &str) -> f64 {
     v.get(key).and_then(Value::as_f64).unwrap_or(0.0)
+}
+
+fn str_field(v: &Value, key: &str) -> String {
+    v.get(key).and_then(Value::as_str).unwrap_or("").to_string()
+}
+
+fn nonempty(s: String) -> Option<String> {
+    if s.is_empty() { None } else { Some(s) }
 }
 
 // ── Parsers ──────────────────────────────────────────────────────────────────
@@ -373,6 +408,109 @@ fn parse_level_objects(v: Option<&Value>) -> Vec<[f64; 2]> {
 }
 
 // ── Unit tests ───────────────────────────────────────────────────────────────
+
+/// `executions` channel `data` is an array of execution reports — order state
+/// changes and fills. One [`DataMessage::OrderUpdate`] per element.
+fn parse_executions(data: &[Value]) -> Vec<DataMessage> {
+    data.iter()
+        .filter_map(parse_execution)
+        .map(DataMessage::OrderUpdate)
+        .collect()
+}
+
+fn parse_execution(d: &Value) -> Option<OrderUpdate> {
+    let symbol = d.get("symbol")?.as_str()?.to_string();
+    let size = f64_field(d, "order_qty") as u32;
+    let filled_size = f64_field(d, "cum_qty") as u32;
+    // A fill carries `exec_type:"trade"` with `last_*` / `exec_id`.
+    let is_trade = d.get("exec_type").and_then(Value::as_str) == Some("trade");
+    Some(OrderUpdate {
+        symbol,
+        exchange: EXCHANGE_NAME.to_string(),
+        order_id: str_field(d, "order_id"),
+        // Kraken's client ref is `cl_ord_id` (string) or the legacy numeric
+        // `order_userref`.
+        client_oid: nonempty(str_field(d, "cl_ord_id")).or_else(|| {
+            d.get("order_userref")
+                .and_then(Value::as_i64)
+                .filter(|&r| r != 0)
+                .map(|r| r.to_string())
+        }),
+        side: side_of(d),
+        order_type: d
+            .get("order_type")
+            .and_then(Value::as_str)
+            .unwrap_or("")
+            .to_lowercase(),
+        status: map_order_status(d.get("order_status").and_then(Value::as_str).unwrap_or("")),
+        price: f64_field(d, "limit_price"),
+        size,
+        filled_size,
+        remaining_size: size.saturating_sub(filled_size),
+        fee: sum_fees(d),
+        match_price: is_trade.then(|| f64_field(d, "last_price")),
+        match_size: is_trade.then(|| f64_field(d, "last_qty") as u32),
+        trade_id: if is_trade {
+            nonempty(str_field(d, "exec_id"))
+        } else {
+            None
+        },
+        exchange_ts: d
+            .get("timestamp")
+            .and_then(Value::as_str)
+            .map_or_else(now_ms, iso_to_ms),
+        receipt_ts: now_ms(),
+    })
+}
+
+/// `balances` channel `data` is an array of per-asset balances. One
+/// [`DataMessage::BalanceUpdate`] per element.
+///
+/// Kraken's v2 `balances` channel reports only the total `balance` per asset —
+/// there's no available/hold split on this channel — so `available_balance`
+/// carries the total and `hold_balance` is `0.0`.
+fn parse_balances(data: &[Value]) -> Vec<DataMessage> {
+    data.iter()
+        .filter_map(|b| {
+            let currency = nonempty(str_field(b, "asset"))?;
+            Some(DataMessage::BalanceUpdate(BalanceUpdate {
+                exchange: EXCHANGE_NAME.to_string(),
+                currency,
+                available_balance: f64_field(b, "balance"),
+                hold_balance: 0.0,
+                event: "balances".to_string(),
+                exchange_ts: now_ms(),
+                receipt_ts: now_ms(),
+            }))
+        })
+        .collect()
+}
+
+fn side_of(d: &Value) -> TradeSide {
+    match d.get("side").and_then(Value::as_str).unwrap_or("buy") {
+        s if s.eq_ignore_ascii_case("sell") => TradeSide::Sell,
+        _ => TradeSide::Buy,
+    }
+}
+
+/// Sum the `qty` across Kraken's `fees` array (`[{"asset":"USD","qty":0.1}]`).
+fn sum_fees(d: &Value) -> f64 {
+    d.get("fees")
+        .and_then(Value::as_array)
+        .map_or(0.0, |arr| arr.iter().map(|f| f64_field(f, "qty")).sum())
+}
+
+/// Map Kraken's v2 `order_status` to the crate's vocabulary.
+fn map_order_status(status: &str) -> String {
+    match status {
+        "partially_filled" => "partialFilled",
+        "filled" => "filled",
+        "canceled" | "expired" => "canceled",
+        // new / pending_new / anything else → resting.
+        _ => "open",
+    }
+    .to_string()
+}
 
 #[cfg(test)]
 mod tests {
@@ -557,11 +695,107 @@ mod tests {
 
     #[test]
     fn parse_unknown_channel_returns_empty() {
-        let raw = r#"{"channel":"executions","data":[{"x":"y"}]}"#;
+        // `status` carries data but isn't mapped to a DataMessage.
+        let raw = r#"{"channel":"status","data":[{"system":"online"}]}"#;
+        assert!(connector().parse_message(raw).expect("parse").is_empty());
+    }
+
+    #[test]
+    fn private_subscription_builders_carry_channel_and_token() {
+        let ex = KrakenConnector::executions_subscription("tok-123");
+        let v: Value = serde_json::from_str(&ex).unwrap();
+        assert_eq!(v["method"], "subscribe");
+        assert_eq!(v["params"]["channel"], "executions");
+        assert_eq!(v["params"]["token"], "tok-123");
+
+        let bal = KrakenConnector::balances_subscription("tok-123");
+        let v: Value = serde_json::from_str(&bal).unwrap();
+        assert_eq!(v["params"]["channel"], "balances");
+        assert_eq!(v["params"]["token"], "tok-123");
+    }
+
+    #[test]
+    fn parse_executions_order_state_into_order_update() {
+        // exec_type "new" → resting order, no fill detail.
+        let raw = r#"{
+            "channel":"executions","type":"snapshot","data":[{
+                "order_id":"O1","cl_ord_id":"my-oid","symbol":"BTC/USD","side":"sell",
+                "order_type":"limit","exec_type":"new","order_status":"partially_filled",
+                "limit_price":30000.5,"order_qty":100,"cum_qty":40,
+                "fees":[{"asset":"USD","qty":0.12}],"timestamp":"2023-09-25T07:48:36.925Z"
+            }]
+        }"#;
         let msgs = connector().parse_message(raw).expect("parse");
-        // Private channels aren't routed by this connector — returns empty
-        // rather than erroring so callers can subscribe to them with
-        // custom logic without the parser flagging.
-        assert!(msgs.is_empty());
+        assert_eq!(msgs.len(), 1);
+        let DataMessage::OrderUpdate(o) = &msgs[0] else {
+            panic!("expected OrderUpdate, got {:?}", msgs[0]);
+        };
+        assert_eq!(o.symbol, "BTC/USD");
+        assert_eq!(o.exchange, "kraken");
+        assert_eq!(o.order_id, "O1");
+        assert_eq!(o.client_oid.as_deref(), Some("my-oid"));
+        assert_eq!(o.side, TradeSide::Sell);
+        assert_eq!(o.order_type, "limit");
+        assert_eq!(o.status, "partialFilled");
+        assert!((o.price - 30000.5).abs() < 1e-9);
+        assert_eq!(o.size, 100);
+        assert_eq!(o.filled_size, 40);
+        assert_eq!(o.remaining_size, 60);
+        assert!((o.fee - 0.12).abs() < 1e-9);
+        assert_eq!(o.match_price, None, "non-trade exec has no fill price");
+        assert_eq!(o.exchange_ts, 1_695_628_116_925);
+    }
+
+    #[test]
+    fn parse_executions_trade_carries_match_details() {
+        // exec_type "trade" → a fill with last_* + exec_id; numeric userref.
+        let raw = r#"{
+            "channel":"executions","type":"update","data":[{
+                "order_id":"O9","order_userref":555,"symbol":"ETH/USD","side":"buy",
+                "order_type":"market","exec_type":"trade","order_status":"filled",
+                "order_qty":10,"cum_qty":10,"last_qty":10,"last_price":2500.25,
+                "exec_id":"T-77","fees":[{"asset":"USD","qty":0.05}],
+                "timestamp":"2023-09-25T07:48:40.000Z"
+            }]
+        }"#;
+        let DataMessage::OrderUpdate(o) = &connector().parse_message(raw).expect("parse")[0] else {
+            panic!("expected OrderUpdate");
+        };
+        assert_eq!(o.order_id, "O9");
+        assert_eq!(
+            o.client_oid.as_deref(),
+            Some("555"),
+            "numeric userref → string"
+        );
+        assert_eq!(o.status, "filled");
+        assert!((o.match_price.unwrap() - 2500.25).abs() < 1e-9);
+        assert_eq!(o.match_size, Some(10));
+        assert_eq!(o.trade_id.as_deref(), Some("T-77"));
+        assert!((o.fee - 0.05).abs() < 1e-9);
+    }
+
+    #[test]
+    fn parse_balances_one_update_per_asset() {
+        let raw = r#"{
+            "channel":"balances","type":"snapshot","data":[
+                {"asset":"USD","balance":1000.5},
+                {"asset":"XBT","balance":0.5}
+            ]
+        }"#;
+        let msgs = connector().parse_message(raw).expect("parse");
+        assert_eq!(msgs.len(), 2);
+        let DataMessage::BalanceUpdate(usd) = &msgs[0] else {
+            panic!("expected BalanceUpdate, got {:?}", msgs[0]);
+        };
+        assert_eq!(usd.exchange, "kraken");
+        assert_eq!(usd.currency, "USD");
+        assert!((usd.available_balance - 1000.5).abs() < 1e-9);
+        assert!((usd.hold_balance - 0.0).abs() < 1e-12);
+        assert_eq!(usd.event, "balances");
+        let DataMessage::BalanceUpdate(xbt) = &msgs[1] else {
+            panic!("expected BalanceUpdate");
+        };
+        assert_eq!(xbt.currency, "XBT");
+        assert!((xbt.available_balance - 0.5).abs() < 1e-9);
     }
 }

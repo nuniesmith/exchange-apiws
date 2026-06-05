@@ -42,6 +42,14 @@ and the project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.
   `trade_id`) and `DataMessage::BalanceUpdate` (one per `position_balances`
   entry). Replies to server `public/heartbeat` via `response_for`. Field parsing
   follows the Exchange API v1 schema with fallbacks for v1's alternate spellings.
+- **Kraken private WebSocket** (`executions` / `balances`, `kraken` feature) —
+  completing the private-WS roadmap. `KrakenPrivateClient::get_websockets_token`
+  (`POST /0/private/GetWebSocketsToken` → `KrakenWsToken`) plus token-bearing
+  `KrakenConnector::executions_subscription` / `balances_subscription` builders,
+  and parse arms normalising `executions` → `DataMessage::OrderUpdate` (fills
+  — `exec_type:"trade"` — carry `match_price` / `match_size` / `trade_id`) and
+  `balances` → `DataMessage::BalanceUpdate` (one per asset; Kraken's v2 channel
+  reports only the total, so `hold_balance` is `0.0`).
 
 ## [0.5.0] – 2026-06-01
 

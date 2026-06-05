@@ -1,4 +1,4 @@
-//! Kraken integration — public REST, private REST (signed), public WS.
+//! Kraken integration — public REST, private REST (signed), public + private WS.
 //!
 //! Kraken's API splits cleanly into an **unauthenticated public** side
 //! (market data, system status — [`KrakenRestClient`] +
@@ -18,6 +18,7 @@ pub use private::{
     KrakenAddOrderResponse, KrakenCancelResponse, KrakenClosedOrders, KrakenLedgerEntry,
     KrakenLedgers, KrakenOpenOrders, KrakenOrder, KrakenOrderDescr, KrakenPrivateClient,
     KrakenTradeHistoryEntry, KrakenTradesHistory, KrakenWithdrawResponse, KrakenWithdrawalRecord,
+    KrakenWsToken,
 };
 pub use rest::{
     KrakenAsset, KrakenAssetPair, KrakenOrderBook, KrakenRestClient, KrakenSystemStatus,
