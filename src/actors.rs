@@ -306,20 +306,22 @@ pub struct OrderUpdate {
     pub status: String,
     /// Order limit price (0.0 for market orders).
     pub price: f64,
-    /// Total order size in contracts.
-    pub size: u32,
-    /// Number of contracts filled so far.
-    pub filled_size: u32,
-    /// Number of contracts still open.
-    pub remaining_size: u32,
+    /// Total order size — base-asset units (spot) or contracts (futures).
+    /// `f64` to preserve fractional spot quantities (e.g. `0.5` BTC).
+    pub size: f64,
+    /// Size filled so far, in the same units as [`size`](Self::size).
+    pub filled_size: f64,
+    /// Size still open, in the same units as [`size`](Self::size).
+    pub remaining_size: f64,
     /// Cumulative fee charged for fills so far.
     pub fee: f64,
     /// Per-execution **match price** — the actual fill price for this execution.
     /// `Some` only on `type:"match"` events; `None` otherwise. Carries the true
     /// fill price even for market orders, where [`price`](Self::price) is `0.0`.
     pub match_price: Option<f64>,
-    /// Per-execution **match size**, in contracts. `Some` only on `match` events.
-    pub match_size: Option<u32>,
+    /// Per-execution **match size**, in the same units as [`size`](Self::size).
+    /// `Some` only on `match` events.
+    pub match_size: Option<f64>,
     /// Exchange trade id for this execution. `Some` only on `match` events — a
     /// stable key for de-duplicating fills off the feed.
     pub trade_id: Option<String>,
@@ -442,8 +444,8 @@ pub struct AdvancedOrderUpdate {
     pub stop_price: Option<f64>,
     /// Limit price (present for stop-limit orders only).
     pub price: Option<f64>,
-    /// Order quantity in contracts.
-    pub size: u32,
+    /// Order quantity — base-asset units (spot) or contracts (futures).
+    pub size: f64,
     /// Exchange timestamp in milliseconds.
     pub exchange_ts: i64,
     /// Local receipt timestamp in milliseconds.

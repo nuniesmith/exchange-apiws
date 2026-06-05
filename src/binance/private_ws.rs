@@ -16,10 +16,10 @@
 //! [`OrderUpdate::trade_id`] (`None` on non-trade events) — so even a market
 //! order (whose `price` is `0`) reports the price it actually filled at.
 //!
-//! Like the other connectors, [`OrderUpdate`]'s `size` family is `u32`;
-//! fractional spot quantities are truncated while the fill price stays exact via
-//! `match_price`. The single-asset `balanceUpdate` *delta* event is intentionally
-//! not mapped (it isn't an available/hold snapshot).
+//! Like the other connectors, [`OrderUpdate`]'s `size` family is `f64`, so
+//! fractional spot quantities are preserved exactly. The single-asset
+//! `balanceUpdate` *delta* event is intentionally not mapped (it isn't an
+//! available/hold snapshot).
 //!
 //! [`BinanceUserDataRest`]: crate::binance::BinanceUserDataRest
 //!
@@ -115,8 +115,8 @@ impl ExchangeConnector for BinanceUserDataConnector {
 /// Parse a spot `executionReport` event into an [`OrderUpdate`].
 fn parse_execution_report(d: &Value) -> Option<OrderUpdate> {
     let symbol = d.get("s")?.as_str()?.to_string();
-    let size = str_f64(d, "q") as u32;
-    let filled_size = str_f64(d, "z") as u32;
+    let size = str_f64(d, "q");
+    let filled_size = str_f64(d, "z");
     let is_trade = d.get("x").and_then(Value::as_str) == Some("TRADE");
     Some(OrderUpdate {
         symbol,
@@ -133,11 +133,11 @@ fn parse_execution_report(d: &Value) -> Option<OrderUpdate> {
         price: str_f64(d, "p"),
         size,
         filled_size,
-        remaining_size: size.saturating_sub(filled_size),
+        remaining_size: (size - filled_size).max(0.0),
         fee: str_f64(d, "n"),
         // Fill details ride only on `x == "TRADE"` events.
         match_price: is_trade.then(|| str_f64(d, "L")),
-        match_size: is_trade.then(|| str_f64(d, "l") as u32),
+        match_size: is_trade.then(|| str_f64(d, "l")),
         // `t` is -1 when the report isn't a trade.
         trade_id: i64_num(d, "t").filter(|&t| t >= 0).map(|t| t.to_string()),
         exchange_ts: i64_num(d, "T")
@@ -261,9 +261,9 @@ mod tests {
         assert_eq!(o.order_type, "limit");
         assert_eq!(o.status, "open");
         assert!((o.price - 30000.50).abs() < 1e-9);
-        assert_eq!(o.size, 2);
-        assert_eq!(o.filled_size, 0);
-        assert_eq!(o.remaining_size, 2);
+        assert!((o.size - 2.0).abs() < 1e-9);
+        assert!((o.filled_size - 0.0).abs() < 1e-9);
+        assert!((o.remaining_size - 2.0).abs() < 1e-9);
         assert_eq!(o.match_price, None, "NEW is not a TRADE");
         assert_eq!(o.trade_id, None, "t=-1 → no trade id");
         assert_eq!(o.exchange_ts, 1_700_000_000_001, "T (transaction time)");
@@ -287,9 +287,9 @@ mod tests {
         assert_eq!(o.status, "partialFilled");
         // The true fill price/size/id ride on the match_* fields.
         assert!((o.match_price.unwrap() - 2500.25).abs() < 1e-9);
-        assert_eq!(o.match_size, Some(4));
-        assert_eq!(o.filled_size, 4);
-        assert_eq!(o.remaining_size, 6, "q=10 − z=4");
+        assert_eq!(o.match_size, Some(4.0));
+        assert!((o.filled_size - 4.0).abs() < 1e-9);
+        assert!((o.remaining_size - 6.0).abs() < 1e-9, "q=10 − z=4");
         assert_eq!(o.trade_id.as_deref(), Some("77"));
         assert!((o.fee - 0.01).abs() < 1e-9);
         assert_eq!(o.exchange_ts, 1_700_000_005_002);

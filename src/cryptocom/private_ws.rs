@@ -12,8 +12,8 @@
 //! | `user.trade` | [`DataMessage::OrderUpdate`] | individual fills (carry `match_price`/`size`/`trade_id`) |
 //! | `user.balance` | [`DataMessage::BalanceUpdate`] | one per `position_balances` entry |
 //!
-//! Like the rest of the crate, [`OrderUpdate`]'s `size` family is `u32` (fractional
-//! spot quantities truncate; the fill price stays exact via `match_price`).
+//! Like the rest of the crate, [`OrderUpdate`]'s `size` family is `f64`, so
+//! fractional spot quantities are preserved exactly.
 //!
 //! ## Schema note
 //!
@@ -189,8 +189,8 @@ impl ExchangeConnector for CryptocomUserConnector {
 /// [`OrderUpdate`].
 fn parse_user_order(d: &Value) -> Option<OrderUpdate> {
     let symbol = d.get("instrument_name")?.as_str()?.to_string();
-    let size = str_f64(d, "quantity") as u32;
-    let filled_size = str_f64(d, "cumulative_quantity") as u32;
+    let size = str_f64(d, "quantity");
+    let filled_size = str_f64(d, "cumulative_quantity");
     let status = d.get("status").and_then(Value::as_str).unwrap_or("");
     Some(OrderUpdate {
         symbol,
@@ -203,7 +203,7 @@ fn parse_user_order(d: &Value) -> Option<OrderUpdate> {
         price: str_f64_any(d, &["limit_price", "price"]),
         size,
         filled_size,
-        remaining_size: size.saturating_sub(filled_size),
+        remaining_size: (size - filled_size).max(0.0),
         fee: str_f64(d, "cumulative_fee"),
         match_price: None,
         match_size: None,
@@ -219,7 +219,7 @@ fn parse_user_order(d: &Value) -> Option<OrderUpdate> {
 /// [`OrderUpdate`] carrying the match price/size/trade-id.
 fn parse_user_trade(d: &Value) -> Option<OrderUpdate> {
     let symbol = d.get("instrument_name")?.as_str()?.to_string();
-    let qty = str_f64(d, "traded_quantity") as u32;
+    let qty = str_f64(d, "traded_quantity");
     let price = str_f64(d, "traded_price");
     Some(OrderUpdate {
         symbol,
@@ -234,7 +234,7 @@ fn parse_user_trade(d: &Value) -> Option<OrderUpdate> {
         price,
         size: qty,
         filled_size: qty,
-        remaining_size: 0,
+        remaining_size: 0.0,
         fee: str_f64_any(d, &["fees", "fee"]),
         match_price: Some(price),
         match_size: Some(qty),
@@ -343,12 +343,12 @@ fn side_of(d: &Value) -> TradeSide {
 /// Map Crypto.com's `status` to the crate's vocabulary. v1 has no explicit
 /// "partially filled" status — it reports `ACTIVE` with a non-zero
 /// `cumulative_quantity`, so derive `partialFilled` from the fill count.
-fn map_order_status(status: &str, filled_size: u32) -> String {
+fn map_order_status(status: &str, filled_size: f64) -> String {
     match status {
         "FILLED" => "filled",
         "CANCELED" | "REJECTED" | "EXPIRED" => "canceled",
         // ACTIVE / NEW / PENDING with fills → partial; otherwise resting.
-        _ if filled_size > 0 => "partialFilled",
+        _ if filled_size > 0.0 => "partialFilled",
         _ => "open",
     }
     .to_string()
@@ -438,9 +438,9 @@ mod tests {
         // ACTIVE with cumulative_quantity > 0 → partialFilled.
         assert_eq!(o.status, "partialFilled");
         assert!((o.price - 30000.5).abs() < 1e-9);
-        assert_eq!(o.size, 100);
-        assert_eq!(o.filled_size, 40);
-        assert_eq!(o.remaining_size, 60);
+        assert!((o.size - 100.0).abs() < 1e-9);
+        assert!((o.filled_size - 40.0).abs() < 1e-9);
+        assert!((o.remaining_size - 60.0).abs() < 1e-9);
         assert!((o.fee - 0.12).abs() < 1e-9);
         assert_eq!(o.match_price, None);
         assert_eq!(o.exchange_ts, 1_700_000_000_000);
@@ -460,7 +460,7 @@ mod tests {
         assert_eq!(o.order_id, "42", "numeric id rendered as string");
         assert_eq!(o.client_oid, None, "empty client_oid → None");
         assert_eq!(o.status, "filled");
-        assert_eq!(o.remaining_size, 0);
+        assert!((o.remaining_size - 0.0).abs() < 1e-9);
     }
 
     #[test]
@@ -480,8 +480,8 @@ mod tests {
         assert_eq!(o.side, TradeSide::Buy);
         assert_eq!(o.status, "partialFilled");
         assert!((o.match_price.unwrap() - 2500.25).abs() < 1e-9);
-        assert_eq!(o.match_size, Some(10));
-        assert_eq!(o.filled_size, 10);
+        assert_eq!(o.match_size, Some(10.0));
+        assert!((o.filled_size - 10.0).abs() < 1e-9);
         assert_eq!(o.trade_id.as_deref(), Some("exec-77"));
         assert!((o.fee - 0.05).abs() < 1e-9);
         assert_eq!(o.exchange_ts, 1_700_000_005_000);

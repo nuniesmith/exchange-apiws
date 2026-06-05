@@ -420,8 +420,8 @@ fn parse_executions(data: &[Value]) -> Vec<DataMessage> {
 
 fn parse_execution(d: &Value) -> Option<OrderUpdate> {
     let symbol = d.get("symbol")?.as_str()?.to_string();
-    let size = f64_field(d, "order_qty") as u32;
-    let filled_size = f64_field(d, "cum_qty") as u32;
+    let size = f64_field(d, "order_qty");
+    let filled_size = f64_field(d, "cum_qty");
     // A fill carries `exec_type:"trade"` with `last_*` / `exec_id`.
     let is_trade = d.get("exec_type").and_then(Value::as_str) == Some("trade");
     Some(OrderUpdate {
@@ -446,10 +446,10 @@ fn parse_execution(d: &Value) -> Option<OrderUpdate> {
         price: f64_field(d, "limit_price"),
         size,
         filled_size,
-        remaining_size: size.saturating_sub(filled_size),
+        remaining_size: (size - filled_size).max(0.0),
         fee: sum_fees(d),
         match_price: is_trade.then(|| f64_field(d, "last_price")),
-        match_size: is_trade.then(|| f64_field(d, "last_qty") as u32),
+        match_size: is_trade.then(|| f64_field(d, "last_qty")),
         trade_id: if is_trade {
             nonempty(str_field(d, "exec_id"))
         } else {
@@ -738,9 +738,9 @@ mod tests {
         assert_eq!(o.order_type, "limit");
         assert_eq!(o.status, "partialFilled");
         assert!((o.price - 30000.5).abs() < 1e-9);
-        assert_eq!(o.size, 100);
-        assert_eq!(o.filled_size, 40);
-        assert_eq!(o.remaining_size, 60);
+        assert!((o.size - 100.0).abs() < 1e-9);
+        assert!((o.filled_size - 40.0).abs() < 1e-9);
+        assert!((o.remaining_size - 60.0).abs() < 1e-9);
         assert!((o.fee - 0.12).abs() < 1e-9);
         assert_eq!(o.match_price, None, "non-trade exec has no fill price");
         assert_eq!(o.exchange_ts, 1_695_628_116_925);
@@ -769,7 +769,7 @@ mod tests {
         );
         assert_eq!(o.status, "filled");
         assert!((o.match_price.unwrap() - 2500.25).abs() < 1e-9);
-        assert_eq!(o.match_size, Some(10));
+        assert_eq!(o.match_size, Some(10.0));
         assert_eq!(o.trade_id.as_deref(), Some("T-77"));
         assert!((o.fee - 0.05).abs() < 1e-9);
     }

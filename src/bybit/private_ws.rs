@@ -23,14 +23,12 @@
 //!
 //! ## Sizes
 //!
-//! [`OrderUpdate`]'s `size` family is `u32` (contract counts, matching the
-//! KuCoin feed). Bybit *inverse* contracts are integer USD contracts and map
-//! cleanly; Bybit *linear*/*spot* quantities are fractional base units and are
-//! truncated here. The fill price is always exact via `match_price`; widening
-//! the `OrderUpdate` size fields to `f64` is a separate (breaking) change.
+//! [`OrderUpdate`]'s `size` family is `f64`, so quantities are represented
+//! exactly — Bybit *inverse* contracts (integer USD) and *linear*/*spot*
+//! fractional base units alike. The true fill price rides on `match_price`.
 //!
-//! [`PositionChange::current_qty`] is `i32` and shares this truncation caveat —
-//! Bybit's unsigned `size` string is signed here by the position `side` (`Buy`
+//! [`PositionChange::current_qty`] is `i32` (contract counts) — Bybit's unsigned
+//! `size` string is signed here by the position `side` (`Buy`
 //! positive, `Sell` negative, empty/`None` → flat). [`BalanceUpdate`] maps the
 //! per-coin `availableToWithdraw` / `locked` fields; note that *UNIFIED*
 //! accounts report availability at the account level, so per-coin
@@ -201,9 +199,9 @@ fn parse_order(d: &Value) -> Option<OrderUpdate> {
         order_type: order_type_of(d),
         status: map_status(d.get("orderStatus").and_then(Value::as_str).unwrap_or("")),
         price: str_f64(d, "price"),
-        size: str_f64(d, "qty") as u32,
-        filled_size: str_f64(d, "cumExecQty") as u32,
-        remaining_size: str_f64(d, "leavesQty") as u32,
+        size: str_f64(d, "qty"),
+        filled_size: str_f64(d, "cumExecQty"),
+        remaining_size: str_f64(d, "leavesQty"),
         fee: str_f64(d, "cumExecFee"),
         match_price: None,
         match_size: None,
@@ -217,7 +215,7 @@ fn parse_order(d: &Value) -> Option<OrderUpdate> {
 /// the match price/size/trade-id.
 fn parse_execution(d: &Value) -> Option<OrderUpdate> {
     let symbol = d.get("symbol")?.as_str()?.to_string();
-    let match_size = str_f64(d, "execQty") as u32;
+    let match_size = str_f64(d, "execQty");
     Some(OrderUpdate {
         symbol,
         exchange: EXCHANGE_NAME.to_string(),
@@ -229,9 +227,9 @@ fn parse_execution(d: &Value) -> Option<OrderUpdate> {
         // `order` topic — treat each execution as a partial fill here.
         status: "partialFilled".to_string(),
         price: str_f64(d, "orderPrice"),
-        size: str_f64(d, "orderQty") as u32,
+        size: str_f64(d, "orderQty"),
         filled_size: match_size,
-        remaining_size: 0,
+        remaining_size: 0.0,
         fee: str_f64(d, "execFee"),
         match_price: Some(str_f64(d, "execPrice")),
         match_size: Some(match_size),
@@ -437,9 +435,9 @@ mod tests {
         assert_eq!(o.order_type, "limit");
         assert_eq!(o.status, "partialFilled");
         assert!((o.price - 30000.5).abs() < 1e-9);
-        assert_eq!(o.size, 100);
-        assert_eq!(o.filled_size, 40);
-        assert_eq!(o.remaining_size, 60);
+        assert!((o.size - 100.0).abs() < 1e-9);
+        assert!((o.filled_size - 40.0).abs() < 1e-9);
+        assert!((o.remaining_size - 60.0).abs() < 1e-9);
         assert!((o.fee - 0.12).abs() < 1e-9);
         assert_eq!(o.match_price, None, "order topic has no per-fill price");
         assert_eq!(o.exchange_ts, 1_700_000_000_000);
@@ -469,8 +467,8 @@ mod tests {
         assert_eq!(o.status, "partialFilled");
         // The true fill price/size/id ride on the match_* fields.
         assert!((o.match_price.unwrap() - 2500.25).abs() < 1e-9);
-        assert_eq!(o.match_size, Some(10));
-        assert_eq!(o.filled_size, 10);
+        assert_eq!(o.match_size, Some(10.0));
+        assert!((o.filled_size - 10.0).abs() < 1e-9);
         assert_eq!(o.trade_id.as_deref(), Some("exec-77"));
         assert!((o.fee - 0.05).abs() < 1e-9);
         assert_eq!(o.exchange_ts, 1_700_000_005_000);
