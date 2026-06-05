@@ -120,7 +120,9 @@ pub mod okx;
 // ── Primary re-exports ────────────────────────────────────────────────────────
 
 #[cfg(feature = "binance")]
-pub use binance::{BinanceConnector, BinanceRestClient};
+pub use binance::{
+    BinanceConnector, BinanceRestClient, BinanceUserDataConnector, BinanceUserDataRest,
+};
 #[cfg(feature = "bybit")]
 pub use bybit::{
     BybitCategory, BybitConnector, BybitCredentials, BybitOrderAck, BybitOrderRequest,
@@ -203,7 +205,9 @@ pub mod prelude {
 
     // Per-exchange clients + connectors (feature-gated).
     #[cfg(feature = "binance")]
-    pub use crate::binance::{BinanceConnector, BinanceRestClient};
+    pub use crate::binance::{
+        BinanceConnector, BinanceRestClient, BinanceUserDataConnector, BinanceUserDataRest,
+    };
     #[cfg(feature = "bybit")]
     pub use crate::bybit::{BybitCategory, BybitConnector, BybitRestClient};
     #[cfg(feature = "cryptocom")]

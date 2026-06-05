@@ -44,11 +44,11 @@ user-data stream (fills/positions) so janus's Bybit path is trade-aware.
 > publish-safe and used. The priority list below now leads with functional
 > surface, not the publish.
 
-1. **Other venues' private WS user-data streams.** Bybit private WS is **done**
-   (C3 — `order` + `execution` → `OrderUpdate` plus `position` → `PositionChange`
-   and `wallet` → `BalanceUpdate`, so a Bybit feed is now fully account-aware for
-   the FKS brain / janus's `bybit_compat`). The remaining gaps are Kraken /
-   Binance / Crypto.com (C1/C2/C4).
+1. **Other venues' private WS user-data streams.** Bybit (C3 — order /
+   execution / position / wallet) and Binance (C2 — user-data: `executionReport`
+   / `outboundAccountPosition`) are **done**, so both feeds are account-aware for
+   the FKS brain / janus's `bybit_compat`. The remaining gaps are Kraken (C1) and
+   Crypto.com (C4).
    → [C](#c-private-websocket--ws-order-entry)
 
 2. **Binance private REST** (signed account / orders /
@@ -120,11 +120,13 @@ The headline functional work. Each exchange already has a public client
       `POST /0/private/GetWebSocketsToken`; `KrakenConnector::private()`
       already exists — add typed subscription helpers + parser arms
       (currently unknown channels are ignored).
-- [ ] **C2 — Binance user-data stream.** `listenKey` lifecycle (create
-      via REST, `PUT` keepalive every ~30 min, stream on
-      `wss://stream.binance.com/ws/<listenKey>`). Parse
-      `executionReport` / `outboundAccountPosition` →
-      `OrderUpdate` / `BalanceUpdate`.
+- [x] **C2 — Binance user-data stream.** `BinanceUserDataRest` listenKey
+      lifecycle (`create` / `keepalive` / `close` — API-key header, no HMAC) +
+      `BinanceUserDataConnector` streaming `/ws/<listenKey>` (no subscription
+      frame). Parses `executionReport` → `OrderUpdate` (fills carry
+      match_price/size/trade_id) and `outboundAccountPosition` → `BalanceUpdate`
+      (one per asset). First authenticated Binance surface; keepalive *scheduling*
+      is the caller's job. Signed account/order REST is still separate (item 2).
 - [x] **C3 — Bybit private WS** (`wss://stream.bybit.com/v5/private`) —
       `BybitPrivateConnector`: post-connect `op:"auth"` frame (signed like B2)
       then `order` + `execution` → `OrderUpdate` (executions carry
