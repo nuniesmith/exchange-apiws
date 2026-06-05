@@ -16,11 +16,15 @@ and the project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.
   `price` is `0.0` for market orders — so a `FillSource` no longer needs a
   `/recentFills` REST hydration to recover fill prices. Additive.
 - **Bybit v5 private WebSocket** (`BybitPrivateConnector`) — authenticates with a
-  post-connect `op:"auth"` frame and subscribes to the `order` + `execution`
-  topics, normalising both into `DataMessage::OrderUpdate` (executions carry the
-  true `match_price` / `match_size` / `trade_id`). Adds an additive
-  `ExchangeConnector::auth_message()` hook (default `None`) so the WS runner
-  sends the auth frame before subscribing — public connectors are unaffected.
+  post-connect `op:"auth"` frame and subscribes to the `order`, `execution`,
+  `position` and `wallet` topics, normalising them into
+  `DataMessage::OrderUpdate` (executions carry the true `match_price` /
+  `match_size` / `trade_id`), `DataMessage::PositionChange` (unsigned `size`
+  signed by `side`; `positionStatus` → `change_reason`), and
+  `DataMessage::BalanceUpdate` (one per coin, account type in `event`). Adds an
+  additive `ExchangeConnector::auth_message()` hook (default `None`) so the WS
+  runner sends the auth frame before subscribing — public connectors are
+  unaffected.
 
 ## [0.5.0] – 2026-06-01
 

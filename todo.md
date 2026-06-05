@@ -45,9 +45,10 @@ user-data stream (fills/positions) so janus's Bybit path is trade-aware.
 > surface, not the publish.
 
 1. **Other venues' private WS user-data streams.** Bybit private WS is **done**
-   (C3 — `order` + `execution` → `OrderUpdate`, so a Bybit feed is now
-   trade-aware for the FKS brain / janus's `bybit_compat`). The remaining gaps
-   are Kraken / Binance / Crypto.com (C1/C2/C4) and Bybit `position`/`wallet`.
+   (C3 — `order` + `execution` → `OrderUpdate` plus `position` → `PositionChange`
+   and `wallet` → `BalanceUpdate`, so a Bybit feed is now fully account-aware for
+   the FKS brain / janus's `bybit_compat`). The remaining gaps are Kraken /
+   Binance / Crypto.com (C1/C2/C4).
    → [C](#c-private-websocket--ws-order-entry)
 
 2. **Binance private REST** (signed account / orders /
@@ -127,9 +128,9 @@ The headline functional work. Each exchange already has a public client
 - [x] **C3 — Bybit private WS** (`wss://stream.bybit.com/v5/private`) —
       `BybitPrivateConnector`: post-connect `op:"auth"` frame (signed like B2)
       then `order` + `execution` → `OrderUpdate` (executions carry
-      match_price/size/trade_id). Driven by the new additive
-      `ExchangeConnector::auth_message()` hook. `position` / `wallet`
-      (→ `PositionChange` / `BalanceUpdate`) remain.
+      match_price/size/trade_id), `position` → `PositionChange`, and `wallet`
+      → `BalanceUpdate` (one per coin, account-type in `event`). Driven by the
+      additive `ExchangeConnector::auth_message()` hook.
 - [ ] **C4 — Crypto.com user channel.** `user.order`, `user.trade`,
       `user.balance` over the existing `…/user` URL; auth via the
       body-`sig` scheme already in `src/cryptocom/auth.rs`.
