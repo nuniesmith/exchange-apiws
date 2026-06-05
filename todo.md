@@ -44,11 +44,11 @@ user-data stream (fills/positions) so janus's Bybit path is trade-aware.
 > publish-safe and used. The priority list below now leads with functional
 > surface, not the publish.
 
-1. **Other venues' private WS user-data streams.** Bybit (C3 — order /
-   execution / position / wallet), Binance (C2 — user-data: `executionReport`
-   / `outboundAccountPosition`), and Crypto.com (C4 — `user.order` / `user.trade`
-   / `user.balance`) are **done**, so those feeds are account-aware for the FKS
-   brain / janus's `bybit_compat`. The remaining gap is **Kraken (C1)**.
+1. ~~**Other venues' private WS user-data streams.**~~ **Done** — Bybit (C3),
+   Binance (C2), Crypto.com (C4), and Kraken (C1) all stream order/fill +
+   balance events into `OrderUpdate` / `BalanceUpdate`, so every venue with a
+   private WS is now account-aware for the FKS brain / janus's `bybit_compat`.
+   Remaining private-side work is **WS order *entry*** beyond KuCoin (C5).
    → [C](#c-private-websocket--ws-order-entry)
 
 2. **Binance private REST** (signed account / orders /
@@ -116,10 +116,12 @@ The headline functional work. Each exchange already has a public client
 
 ## C. Private WebSocket & WS order entry
 
-- [ ] **C1 — Kraken private WS** (`executions`, `balances`). Token from
-      `POST /0/private/GetWebSocketsToken`; `KrakenConnector::private()`
-      already exists — add typed subscription helpers + parser arms
-      (currently unknown channels are ignored).
+- [x] **C1 — Kraken private WS** (`executions`, `balances`). `get_websockets_token`
+      (`POST /0/private/GetWebSocketsToken` → `KrakenWsToken`) +
+      `KrakenConnector::executions_subscription` / `balances_subscription`
+      (token-bearing) + parse arms: `executions` → `OrderUpdate` (trades carry
+      match_price/size/trade_id), `balances` → `BalanceUpdate` (total only —
+      Kraken's v2 channel has no available/hold split, so `hold_balance` = 0).
 - [x] **C2 — Binance user-data stream.** `BinanceUserDataRest` listenKey
       lifecycle (`create` / `keepalive` / `close` — API-key header, no HMAC) +
       `BinanceUserDataConnector` streaming `/ws/<listenKey>` (no subscription

@@ -250,6 +250,18 @@ pub struct KrakenWithdrawalRecord {
     pub status: String,
 }
 
+/// Response of `POST /0/private/GetWebSocketsToken` — a short-lived token for
+/// authenticating to the private WebSocket channels (`executions`/`balances`).
+#[derive(Debug, Clone, Deserialize)]
+pub struct KrakenWsToken {
+    /// The token to place in `params.token` on a private subscribe frame
+    /// (see [`KrakenConnector::executions_subscription`](crate::kraken::KrakenConnector::executions_subscription)).
+    pub token: String,
+    /// Seconds the token stays valid for the *initial* WS connection (Kraken
+    /// returns `900`). Once subscribed, the connection persists past expiry.
+    pub expires: i64,
+}
+
 // ── Client ───────────────────────────────────────────────────────────────────
 
 /// Authenticated Kraken REST client.
@@ -357,6 +369,19 @@ impl KrakenPrivateClient {
     /// `POST /0/private/OpenOrders` — currently-open orders.
     pub async fn get_open_orders(&self) -> Result<KrakenOpenOrders> {
         self.post("/0/private/OpenOrders", &[]).await
+    }
+
+    /// `POST /0/private/GetWebSocketsToken` — a short-lived token for the
+    /// private WS channels (`executions` / `balances`).
+    ///
+    /// Pass [`KrakenWsToken::token`] to
+    /// [`KrakenConnector::executions_subscription`](crate::kraken::KrakenConnector::executions_subscription)
+    /// / [`balances_subscription`](crate::kraken::KrakenConnector::balances_subscription)
+    /// and subscribe on the [`private`](crate::kraken::KrakenConnector::private)
+    /// endpoint.
+    pub async fn get_websockets_token(&self) -> Result<KrakenWsToken> {
+        info!("Fetching Kraken WebSockets token");
+        self.post("/0/private/GetWebSocketsToken", &[]).await
     }
 
     /// `POST /0/private/ClosedOrders` — historical orders (paginated
@@ -470,6 +495,15 @@ mod tests {
             assert!(n > prev, "nonce did not increase: {prev} -> {n}");
             prev = n;
         }
+    }
+
+    #[test]
+    fn ws_token_deserializes() {
+        // Shape of the `result` object after `unwrap_kraken_envelope`.
+        let raw = r#"{"token":"abc-123-token","expires":900}"#;
+        let t: KrakenWsToken = serde_json::from_str(raw).expect("deserialize");
+        assert_eq!(t.token, "abc-123-token");
+        assert_eq!(t.expires, 900);
     }
 
     #[test]
