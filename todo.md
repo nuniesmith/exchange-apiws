@@ -23,8 +23,7 @@ Per-exchange Cargo features. Runnable examples. README + CHANGELOG current.
 | Coinbase   | — | — | **✓ (0.5.0)** | — | — |
 | OKX        | — | — | **✓ (0.5.0)** | — | — |
 
-**Recently shipped** (consumed by the FKS stack — see
-`fks-full/docs/MULTI_ASSET_BRAIN_ROADMAP.md`):
+**Recently shipped:**
 - **0.4.0** — signed Bybit v5 REST (`BybitPrivateClient`: orders, positions,
   wallet) + HMAC signing. Closed the "Bybit has no signed surface" gap.
 - **0.5.0** — Coinbase Advanced Trade + OKX v5 **public WS connectors**

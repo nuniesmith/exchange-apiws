@@ -40,8 +40,9 @@ pub struct AccountOverview {
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct PositionInfo {
-    /// Positive = long, negative = short, 0 = flat.
-    pub current_qty: i32,
+    /// Positive = long, negative = short, 0 = flat. `f64` so fractional sizes
+    /// are represented exactly.
+    pub current_qty: f64,
     /// Instrument symbol.
     pub symbol: String,
     /// Volume-weighted average entry price, if a position is open.
@@ -65,17 +66,17 @@ pub struct PositionInfo {
 impl PositionInfo {
     /// Returns `true` when `current_qty` is zero (no open position).
     pub const fn is_flat(&self) -> bool {
-        self.current_qty == 0
+        !self.is_long() && !self.is_short()
     }
 
     /// Returns `true` when `current_qty` is positive (long position).
     pub const fn is_long(&self) -> bool {
-        self.current_qty > 0
+        self.current_qty > 0.0
     }
 
     /// Returns `true` when `current_qty` is negative (short position).
     pub const fn is_short(&self) -> bool {
-        self.current_qty < 0
+        self.current_qty < 0.0
     }
 }
 

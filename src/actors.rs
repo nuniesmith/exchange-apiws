@@ -341,8 +341,9 @@ pub struct PositionChange {
     pub symbol: String,
     /// Exchange identifier.
     pub exchange: String,
-    /// Positive = long, negative = short, 0 = flat.
-    pub current_qty: i32,
+    /// Positive = long, negative = short, 0 = flat. `f64` so fractional sizes
+    /// (e.g. spot/linear base units) are represented exactly.
+    pub current_qty: f64,
     /// Volume-weighted average entry price.
     pub avg_entry_price: f64,
     /// Current unrealised profit/loss in quote currency.
