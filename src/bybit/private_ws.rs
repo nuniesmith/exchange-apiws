@@ -27,7 +27,8 @@
 //! exactly — Bybit *inverse* contracts (integer USD) and *linear*/*spot*
 //! fractional base units alike. The true fill price rides on `match_price`.
 //!
-//! [`PositionChange::current_qty`] is `i32` (contract counts) — Bybit's unsigned
+//! [`PositionChange::current_qty`] is `f64` (fractional sizes supported) —
+//! Bybit's unsigned
 //! `size` string is signed here by the position `side` (`Buy`
 //! positive, `Sell` negative, empty/`None` → flat). [`BalanceUpdate`] maps the
 //! per-coin `availableToWithdraw` / `locked` fields; note that *UNIFIED*
@@ -247,11 +248,11 @@ fn parse_execution(d: &Value) -> Option<OrderUpdate> {
 /// (`"Normal"` / `"Liq"` / `"Adl"`) stands in, defaulting to `"positionChange"`.
 fn parse_position(d: &Value) -> Option<PositionChange> {
     let symbol = d.get("symbol")?.as_str()?.to_string();
-    let magnitude = str_f64(d, "size") as i32;
+    let magnitude = str_f64(d, "size");
     let current_qty = match d.get("side").and_then(Value::as_str).unwrap_or("") {
         s if s.eq_ignore_ascii_case("sell") => -magnitude,
         s if s.eq_ignore_ascii_case("buy") => magnitude,
-        _ => 0, // flat: "" / "None"
+        _ => 0.0, // flat: "" / "None"
     };
     Some(PositionChange {
         symbol,
@@ -495,7 +496,7 @@ mod tests {
         assert_eq!(p.symbol, "BTCUSD");
         assert_eq!(p.exchange, "bybit");
         // Short position: unsigned size 150 signed negative by side=Sell.
-        assert_eq!(p.current_qty, -150);
+        assert!((p.current_qty + 150.0).abs() < 1e-9);
         assert!((p.avg_entry_price - 29850.5).abs() < 1e-9);
         assert!((p.unrealised_pnl + 12.5).abs() < 1e-9);
         assert!((p.realised_pnl - 340.25).abs() < 1e-9);
@@ -515,7 +516,7 @@ mod tests {
         let DataMessage::PositionChange(p) = &c.parse_message(raw).unwrap()[0] else {
             panic!("expected PositionChange");
         };
-        assert_eq!(p.current_qty, 0);
+        assert!(p.current_qty.abs() < 1e-9);
         assert_eq!(p.change_reason, "positionChange");
     }
 

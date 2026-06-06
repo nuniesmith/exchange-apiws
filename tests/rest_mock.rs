@@ -123,7 +123,7 @@ async fn get_position_returns_current_qty() {
         .await
         .expect("get_position failed");
 
-    assert_eq!(pos.current_qty, 10);
+    assert!((pos.current_qty - 10.0).abs() < 1e-9);
     assert_eq!(pos.symbol, "XBTUSDTM");
     assert!(pos.is_long());
     assert!(!pos.is_short());
@@ -153,7 +153,7 @@ async fn get_position_short_returns_negative_qty() {
         .await
         .expect("get_position failed");
 
-    assert_eq!(pos.current_qty, -20);
+    assert!((pos.current_qty + 20.0).abs() < 1e-9);
     assert!(pos.is_short());
     assert!(!pos.is_long());
     assert!(!pos.is_flat());

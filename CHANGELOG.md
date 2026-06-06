@@ -6,6 +6,18 @@ and the project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.
 
 ## [Unreleased]
 
+## [0.7.0] – 2026-06-06
+
+### Changed
+
+- **BREAKING: `PositionChange.current_qty` and `PositionInfo.current_qty` widened
+  `i32` → `f64`.** Position quantities are no longer truncated to whole contracts,
+  so fractional sizes (spot / linear base units, e.g. `0.5`) are represented
+  exactly — matching the `OrderUpdate` quantity widening in 0.6.0. The Bybit
+  `position` parser and the BitMEX-style `currentQty` feed parser keep the
+  fractional magnitude, and `PositionInfo::{is_long,is_short,is_flat}` now compare
+  against `0.0`. Consumers reading `current_qty` as an integer must move to `f64`.
+
 ## [0.6.0] – 2026-06-06
 
 ### Added

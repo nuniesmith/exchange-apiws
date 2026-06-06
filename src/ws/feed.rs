@@ -544,7 +544,7 @@ fn parse_position_change(symbol: &str, exchange: &str, data: &Value) -> Vec<Data
     vec![DataMessage::PositionChange(PositionChange {
         symbol: symbol.to_string(),
         exchange: exchange.to_string(),
-        current_qty: data["currentQty"].as_i64().unwrap_or(0) as i32,
+        current_qty: data["currentQty"].as_f64().unwrap_or(0.0),
         avg_entry_price: str_f64(data, "avgEntryPrice"),
         unrealised_pnl: str_f64(data, "unrealisedPnl"),
         realised_pnl: str_f64(data, "realisedPnl"),
