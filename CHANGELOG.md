@@ -6,6 +6,8 @@ and the project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.
 
 ## [Unreleased]
 
+## [0.6.0] – 2026-06-06
+
 ### Added
 
 - **Per-execution match details on `OrderUpdate`** (KuCoin private `tradeOrders`
@@ -461,7 +463,10 @@ Initial KuCoin Futures REST + WebSocket implementation, including:
 - Bullet-public / bullet-private WS token negotiation
 - 100 msg / 10 s sliding-window outbound rate limit
 
-[Unreleased]: https://github.com/nuniesmith/exchange-apiws/compare/v0.3.2...HEAD
+[Unreleased]: https://github.com/nuniesmith/exchange-apiws/compare/v0.6.0...HEAD
+[0.6.0]: https://github.com/nuniesmith/exchange-apiws/compare/v0.5.0...v0.6.0
+[0.5.0]: https://github.com/nuniesmith/exchange-apiws/compare/v0.4.0...v0.5.0
+[0.4.0]: https://github.com/nuniesmith/exchange-apiws/compare/v0.3.2...v0.4.0
 [0.3.2]: https://github.com/nuniesmith/exchange-apiws/compare/v0.3.1...v0.3.2
 [0.3.1]: https://github.com/nuniesmith/exchange-apiws/compare/v0.3.0...v0.3.1
 [0.3.0]: https://github.com/nuniesmith/exchange-apiws/compare/v0.2.20...v0.3.0
