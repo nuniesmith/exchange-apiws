@@ -168,3 +168,31 @@ async fn get_surfaces_4xx_without_retry() {
         other => panic!("expected ExchangeError::Api(400), got {other:?}"),
     }
 }
+
+#[tokio::test]
+async fn get_caps_consecutive_429s() {
+    let server = MockServer::start().await;
+
+    // Every response is 429 with an immediate retry. 429s don't consume the
+    // normal retry budget, so the dedicated cap must kick in rather than
+    // looping forever.
+    Mock::given(method("GET"))
+        .and(path("/api/v3/limited"))
+        .respond_with(ResponseTemplate::new(429).insert_header("Retry-After", "0"))
+        .mount(&server)
+        .await;
+
+    let result: Result<serde_json::Value, _> =
+        client(&server.uri()).get("/api/v3/limited", &[]).await;
+
+    match result {
+        Err(ExchangeError::Api { code, message }) => {
+            assert_eq!(code, "429");
+            assert!(
+                message.contains("giving up"),
+                "expected the rate-limit-cap error, got: {message}"
+            );
+        }
+        other => panic!("expected ExchangeError::Api(429), got {other:?}"),
+    }
+}

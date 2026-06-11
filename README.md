@@ -50,10 +50,10 @@ example below](#supervised-websocket-feed-token-re-negotiation-on-cascade).
 
 ## Status
 
-Everything in the original roadmap is implemented. 329 tests across the
-crate cover signing, envelope unwrapping, WS connector parsers, and the
-runner lifecycle (reconnect, supervised token refresh, idle timeout,
-event observability).
+Everything in the original roadmap is implemented. The offline test suite
+covers signing, envelope unwrapping, WS connector parsers, and the runner
+lifecycle (reconnect, supervised token refresh, idle timeout, event
+observability).
 
 ### Exchange-by-exchange surface
 

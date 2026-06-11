@@ -6,6 +6,30 @@ and the project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.
 
 ## [Unreleased]
 
+### Fixed
+
+- **`WsOrderClient::close()` now actually tears the connection down.**
+  Previously it only set a flag that neither background task observed until
+  the next frame happened to arrive — pending requests waited out their full
+  request timeout and the socket/tasks leaked until the server closed.
+  `close()` now wakes both tasks via a shutdown signal: the writer sends a WS
+  Close frame and the reader immediately fails still-pending requests with the
+  documented `connection_closed` sentinel. Either task tearing down (e.g. a
+  failed send on a half-open socket) now also wakes the other.
+- **HTTP 429 responses no longer consume the transient-error retry budget.**
+  The retry loops in `KuCoinClient` and `PublicRestClient` documented that
+  rate-limit sleeps don't count against the retry budget, but the loop counter
+  advanced anyway — making the dedicated `MAX_RATE_LIMIT_RETRIES` cap
+  unreachable. Persistent 429s now exhaust the rate-limit cap (with its
+  explicit "giving up" error) instead of silently eating the retry budget.
+
+### Changed
+
+- **`WsOrderClient`'s outbound queue is now bounded** (256 frames). When the
+  writer is stalled or rate-limited (100 msg / 10 s guard), new requests fail
+  fast with a backpressure `ExchangeError::Order` instead of buffering
+  order frames in memory without bound.
+
 ## [0.7.0] – 2026-06-06
 
 ### Changed

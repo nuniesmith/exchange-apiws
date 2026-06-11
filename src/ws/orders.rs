@@ -60,7 +60,7 @@ use std::time::Duration;
 
 use futures_util::{SinkExt, StreamExt};
 use serde_json::{Value, json};
-use tokio::sync::{Mutex, mpsc, oneshot};
+use tokio::sync::{Mutex, mpsc, oneshot, watch};
 use tokio_tungstenite::{connect_async, tungstenite::Message};
 use tracing::{debug, info, warn};
 use uuid::Uuid;
@@ -71,6 +71,13 @@ use crate::ws::runner::WsMsgGuard;
 
 /// Default deadline for a single order request/ack round-trip.
 const DEFAULT_REQUEST_TIMEOUT_SECS: u64 = 5;
+
+/// Maximum number of outbound frames queued ahead of the writer task.
+///
+/// The writer drains at the [`WsMsgGuard`] rate (100 msg / 10 s), so a full
+/// queue represents ~25 s of backlog — at that point new requests fail fast
+/// with a backpressure error instead of buffering without bound.
+const OUTBOUND_QUEUE_CAPACITY: usize = 256;
 
 // ── Public types ─────────────────────────────────────────────────────────────
 
@@ -98,8 +105,9 @@ pub struct WsOrderAck {
 // ── Client ───────────────────────────────────────────────────────────────────
 
 /// Sender end of the internal outbound queue — every place/cancel turns into
-/// a single text frame pushed here.
-type OutboundQueue = mpsc::UnboundedSender<String>;
+/// a single text frame pushed here. Bounded ([`OUTBOUND_QUEUE_CAPACITY`]) so
+/// a stalled or rate-limited writer surfaces as backpressure, not memory growth.
+type OutboundQueue = mpsc::Sender<String>;
 
 /// Map from `clientOid` to the oneshot the requester is awaiting on.
 type Pending = Arc<Mutex<HashMap<String, oneshot::Sender<WsOrderAck>>>>;
@@ -114,6 +122,7 @@ pub struct WsOrderClient {
     outbound: OutboundQueue,
     pending: Pending,
     closed: Arc<AtomicBool>,
+    shutdown: watch::Sender<bool>,
     request_timeout: Duration,
 }
 
@@ -132,26 +141,41 @@ impl WsOrderClient {
         let (ws, _resp) = connect_async(&url).await?;
         let (mut write, mut read) = ws.split();
 
-        let (outbound_tx, mut outbound_rx) = mpsc::unbounded_channel::<String>();
+        let (outbound_tx, mut outbound_rx) = mpsc::channel::<String>(OUTBOUND_QUEUE_CAPACITY);
         let pending: Pending = Arc::new(Mutex::new(HashMap::new()));
         let closed = Arc::new(AtomicBool::new(false));
+        // Shutdown broadcast — [`Self::close`] (or either task tearing down)
+        // flips it so both tasks exit promptly instead of staying parked on
+        // their respective `recv`/`next` awaits.
+        let (shutdown_tx, _) = watch::channel(false);
 
         // Writer task — drains outbound_rx into the WS sink, with the
-        // shared 100 msg/10s rate-limit guard between sends.
+        // shared 100 msg/10s rate-limit guard between sends. Exits on
+        // shutdown, on queue close (all client handles dropped), or on a
+        // failed send.
         let writer_closed = closed.clone();
+        let writer_shutdown = shutdown_tx.clone();
+        let mut writer_shutdown_rx = shutdown_tx.subscribe();
         tokio::spawn(async move {
             let mut guard = WsMsgGuard::new();
-            while let Some(frame) = outbound_rx.recv().await {
-                if writer_closed.load(Ordering::SeqCst) {
-                    break;
-                }
+            loop {
+                let frame = tokio::select! {
+                    _ = writer_shutdown_rx.changed() => break,
+                    frame = outbound_rx.recv() => match frame {
+                        Some(frame) => frame,
+                        None => break,
+                    },
+                };
                 guard.check().await;
                 if let Err(e) = write.send(Message::Text(frame.into())).await {
                     warn!(error = %e, "WS-order: send failed; tearing down");
-                    writer_closed.store(true, Ordering::SeqCst);
                     break;
                 }
             }
+            // Wake the reader too — on a half-open socket the server never
+            // closes its side, and pending requests must still resolve.
+            writer_closed.store(true, Ordering::SeqCst);
+            let _ = writer_shutdown.send(true);
             let _ = write.send(Message::Close(None)).await;
         });
 
@@ -159,11 +183,17 @@ impl WsOrderClient {
         // clientOid lookup. Welcomes / pongs / unrelated frames are dropped.
         let reader_pending = pending.clone();
         let reader_closed = closed.clone();
+        let reader_shutdown = shutdown_tx.clone();
+        let mut reader_shutdown_rx = shutdown_tx.subscribe();
         tokio::spawn(async move {
-            while let Some(frame) = read.next().await {
-                if reader_closed.load(Ordering::SeqCst) {
-                    break;
-                }
+            loop {
+                let frame = tokio::select! {
+                    _ = reader_shutdown_rx.changed() => break,
+                    frame = read.next() => match frame {
+                        Some(frame) => frame,
+                        None => break,
+                    },
+                };
                 match frame {
                     Ok(Message::Text(text)) => {
                         if let Some(ack) = parse_inbound(&text) {
@@ -178,14 +208,14 @@ impl WsOrderClient {
                             }
                         }
                     }
-                    Ok(Message::Close(_)) | Err(_) => {
-                        reader_closed.store(true, Ordering::SeqCst);
-                        break;
-                    }
+                    Ok(Message::Close(_)) | Err(_) => break,
                     _ => {}
                 }
             }
-            // Fail any still-pending requests so callers don't block forever.
+            // Tear the writer down as well, then fail any still-pending
+            // requests so callers don't block until their timeout.
+            reader_closed.store(true, Ordering::SeqCst);
+            let _ = reader_shutdown.send(true);
             let mut map = reader_pending.lock().await;
             for (_oid, tx) in map.drain() {
                 let _ = tx.send(WsOrderAck {
@@ -203,6 +233,7 @@ impl WsOrderClient {
             outbound: outbound_tx,
             pending,
             closed,
+            shutdown: shutdown_tx,
             request_timeout: Duration::from_secs(DEFAULT_REQUEST_TIMEOUT_SECS),
         })
     }
@@ -218,6 +249,9 @@ impl WsOrderClient {
     /// `connection_closed` error so callers don't hang.
     pub fn close(&self) {
         self.closed.store(true, Ordering::SeqCst);
+        // Wake both tasks: the writer sends a WS Close frame, the reader
+        // fails still-pending requests with `connection_closed`.
+        let _ = self.shutdown.send(true);
     }
 
     /// Returns `true` once the connection has been torn down (either via
@@ -274,13 +308,24 @@ impl WsOrderClient {
         let (tx, rx) = oneshot::channel();
         self.pending.lock().await.insert(client_oid.to_string(), tx);
 
-        // Push the frame into the outbound queue. If the writer task has
-        // already exited the send will fail.
-        if self.outbound.send(frame).is_err() {
-            self.pending.lock().await.remove(client_oid);
-            return Err(ExchangeError::Order(
-                "WS-order writer task is closed".into(),
-            ));
+        // Push the frame into the outbound queue without waiting — a full
+        // queue means the writer is rate-limited or stalled, and queueing
+        // more order frames behind it would only go stale.
+        match self.outbound.try_send(frame) {
+            Ok(()) => {}
+            Err(mpsc::error::TrySendError::Full(_)) => {
+                self.pending.lock().await.remove(client_oid);
+                return Err(ExchangeError::Order(format!(
+                    "WS-order outbound queue is full ({OUTBOUND_QUEUE_CAPACITY} \
+                     frames) — writer is rate-limited or stalled"
+                )));
+            }
+            Err(mpsc::error::TrySendError::Closed(_)) => {
+                self.pending.lock().await.remove(client_oid);
+                return Err(ExchangeError::Order(
+                    "WS-order writer task is closed".into(),
+                ));
+            }
         }
 
         match tokio::time::timeout(self.request_timeout, rx).await {

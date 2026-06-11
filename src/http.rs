@@ -167,8 +167,9 @@ impl PublicRestClient {
     /// Retry policy:
     /// - Network errors (connect, timeout, DNS) are retried a few times
     ///   with jittered exponential backoff.
-    /// - HTTP 429 responses honour the `Retry-After` header (seconds form)
-    ///   and are capped before giving up.
+    /// - HTTP 429 responses honour the `Retry-After` header (seconds form).
+    ///   They do not consume the retry budget but are capped at
+    ///   [`MAX_RATE_LIMIT_RETRIES`] before giving up.
     /// - Other 4xx/5xx responses surface as [`ExchangeError::Api`] without retry.
     pub async fn get<T: DeserializeOwned>(&self, path: &str, params: &[(&str, &str)]) -> Result<T> {
         let qs = build_query_string(params);
@@ -176,8 +177,9 @@ impl PublicRestClient {
 
         let mut last_err: Option<ExchangeError> = None;
         let mut rate_limit_hits: u32 = 0;
+        let mut attempt: u32 = 0;
 
-        for attempt in 0..DEFAULT_RETRIES {
+        while attempt < DEFAULT_RETRIES {
             let send_result = self.http.get(&url).send().await;
             let resp = match send_result {
                 Ok(r) => r,
@@ -193,6 +195,7 @@ impl PublicRestClient {
                     );
                     tokio::time::sleep(Duration::from_secs_f64(wait)).await;
                     last_err = Some(ExchangeError::Http(e));
+                    attempt += 1;
                     continue;
                 }
                 Err(e) => return Err(ExchangeError::Http(e)),
@@ -222,6 +225,8 @@ impl PublicRestClient {
                     code: "429".into(),
                     message: "rate limited".into(),
                 });
+                // Rate-limit sleeps don't consume the retry budget — the
+                // cap above bounds them instead.
                 continue;
             }
 
