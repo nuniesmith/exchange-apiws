@@ -168,8 +168,8 @@ impl PublicRestClient {
     /// - Network errors (connect, timeout, DNS) are retried a few times
     ///   with jittered exponential backoff.
     /// - HTTP 429 responses honour the `Retry-After` header (seconds form).
-    ///   They do not consume the retry budget but are capped at
-    ///   [`MAX_RATE_LIMIT_RETRIES`] before giving up.
+    ///   They do not consume the retry budget but are capped at a small
+    ///   fixed count before giving up.
     /// - Other 4xx/5xx responses surface as [`ExchangeError::Api`] without retry.
     pub async fn get<T: DeserializeOwned>(&self, path: &str, params: &[(&str, &str)]) -> Result<T> {
         let qs = build_query_string(params);
