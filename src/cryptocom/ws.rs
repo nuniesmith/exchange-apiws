@@ -366,6 +366,14 @@ fn parse_books(data: &[Value], instrument_fallback: &str, is_snapshot: bool) -> 
     let now = now_ms();
     data.iter()
         .map(|b| {
+            // `u` / `pu` (previous `u`) are present on book-delta
+            // subscriptions; the plain book channel omits them.
+            let last_update_id = b.get("u").and_then(Value::as_u64);
+            let first_update_id = b
+                .get("pu")
+                .and_then(Value::as_u64)
+                .map(|pu| pu + 1)
+                .or(last_update_id);
             DataMessage::OrderBook(OrderBookData {
                 symbol: instrument_fallback.to_string(),
                 exchange: EXCHANGE_NAME.to_string(),
@@ -374,6 +382,8 @@ fn parse_books(data: &[Value], instrument_fallback: &str, is_snapshot: bool) -> 
                 exchange_ts: b.get("t").and_then(Value::as_i64).unwrap_or(now),
                 receipt_ts: now,
                 is_snapshot,
+                first_update_id,
+                last_update_id,
             })
         })
         .collect()

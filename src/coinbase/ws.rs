@@ -244,6 +244,9 @@ fn parse_l2(ev: &Value) -> Option<DataMessage> {
         exchange_ts: now_ms(),
         receipt_ts: now_ms(),
         is_snapshot,
+        // Coinbase's `sequence_num` is per-connection, not per-book.
+        first_update_id: None,
+        last_update_id: None,
     }))
 }
 

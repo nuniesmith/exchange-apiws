@@ -239,6 +239,18 @@ fn parse_book(d: &Value, is_snapshot: bool) -> DataMessage {
             })
             .unwrap_or_default()
     };
+    // OKX numbers messages with `seqId` and chains them via `prevSeqId`
+    // (`-1` on snapshots), so the first update this message covers is
+    // `prevSeqId + 1`.
+    let last_update_id = d
+        .get("seqId")
+        .and_then(Value::as_i64)
+        .and_then(|s| u64::try_from(s).ok());
+    let first_update_id = d
+        .get("prevSeqId")
+        .and_then(Value::as_i64)
+        .and_then(|p| u64::try_from(p + 1).ok())
+        .or(last_update_id);
     DataMessage::OrderBook(OrderBookData {
         symbol: d
             .get("instId")
@@ -251,6 +263,8 @@ fn parse_book(d: &Value, is_snapshot: bool) -> DataMessage {
         exchange_ts: str_i64(d, "ts"),
         receipt_ts: now_ms(),
         is_snapshot,
+        first_update_id,
+        last_update_id,
     })
 }
 

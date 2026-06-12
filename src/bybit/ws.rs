@@ -330,6 +330,8 @@ fn parse_kline_batch(data: &Value) -> Vec<DataMessage> {
 fn parse_orderbook(data: &Value, is_snapshot: bool) -> Vec<DataMessage> {
     let symbol = data["s"].as_str().unwrap_or("").to_string();
     let now = now_ms();
+    // Bybit stamps one update ID (`u`) per message; deltas are contiguous.
+    let update_id = data["u"].as_u64();
     vec![DataMessage::OrderBook(OrderBookData {
         symbol,
         exchange: EXCHANGE_NAME.to_string(),
@@ -338,6 +340,8 @@ fn parse_orderbook(data: &Value, is_snapshot: bool) -> Vec<DataMessage> {
         exchange_ts: now,
         receipt_ts: now,
         is_snapshot,
+        first_update_id: update_id,
+        last_update_id: update_id,
     })]
 }
 
@@ -524,6 +528,8 @@ mod tests {
             DataMessage::OrderBook(ob) => {
                 assert!(!ob.is_snapshot);
                 assert!((ob.bids[0][1] - 0.0).abs() < 1e-12); // qty 0 = remove
+                assert_eq!(ob.first_update_id, Some(2));
+                assert_eq!(ob.last_update_id, Some(2));
             }
             _ => panic!("delta was not OrderBook"),
         }

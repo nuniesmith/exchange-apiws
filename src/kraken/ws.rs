@@ -387,6 +387,9 @@ fn parse_books(data: &[Value], is_snapshot: bool) -> Vec<DataMessage> {
                 exchange_ts: now, // No exchange timestamp on this frame.
                 receipt_ts: now,
                 is_snapshot,
+                // Kraken v2 books carry a CRC32 checksum, not a sequence.
+                first_update_id: None,
+                last_update_id: None,
             })
         })
         .collect()

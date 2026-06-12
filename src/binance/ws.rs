@@ -355,6 +355,8 @@ fn parse_depth_update(exchange: &str, data: &Value) -> Vec<DataMessage> {
         exchange_ts: data["E"].as_i64().unwrap_or(0),
         receipt_ts: now_ms(),
         is_snapshot: false,
+        first_update_id: data["U"].as_u64(),
+        last_update_id: data["u"].as_u64(),
     })]
 }
 
@@ -378,6 +380,7 @@ fn parse_book_ticker(exchange: &str, data: &Value) -> Vec<DataMessage> {
 fn parse_depth_snapshot(exchange: &str, symbol: &str, data: &Value) -> Vec<DataMessage> {
     // Partial-book frames carry no event time; treat receipt time as both.
     let now = now_ms();
+    let last_update_id = data["lastUpdateId"].as_u64();
     vec![DataMessage::OrderBook(OrderBookData {
         symbol: symbol.to_string(),
         exchange: exchange.to_string(),
@@ -386,6 +389,8 @@ fn parse_depth_snapshot(exchange: &str, symbol: &str, data: &Value) -> Vec<DataM
         exchange_ts: now,
         receipt_ts: now,
         is_snapshot: true,
+        first_update_id: last_update_id,
+        last_update_id,
     })]
 }
 
@@ -524,6 +529,8 @@ mod tests {
                 assert_eq!(ob.bids.len(), 2);
                 assert!((ob.bids[1][1] - 0.0).abs() < 1e-12); // qty 0 = remove level
                 assert_eq!(ob.asks.len(), 1);
+                assert_eq!(ob.first_update_id, Some(157));
+                assert_eq!(ob.last_update_id, Some(160));
             }
             other => panic!("expected OrderBook, got {other:?}"),
         }
@@ -547,6 +554,7 @@ mod tests {
                 assert!(ob.is_snapshot);
                 assert_eq!(ob.bids.len(), 1);
                 assert_eq!(ob.asks.len(), 1);
+                assert_eq!(ob.last_update_id, Some(999));
             }
             other => panic!("expected OrderBook, got {other:?}"),
         }

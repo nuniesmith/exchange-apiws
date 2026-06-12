@@ -462,6 +462,9 @@ fn parse_orderbook_depth(symbol: &str, exchange: &str, data: &Value) -> Vec<Data
         exchange_ts,
         receipt_ts: chrono::Utc::now().timestamp_millis(),
         is_snapshot: true,
+        // level2Depth frames are self-contained snapshots with no sequence.
+        first_update_id: None,
+        last_update_id: None,
     })]
 }
 
@@ -489,6 +492,8 @@ fn parse_level2_delta(symbol: &str, exchange: &str, data: &Value) -> Vec<DataMes
         .as_i64()
         .unwrap_or_else(|| chrono::Utc::now().timestamp_millis());
 
+    // Futures level2 deltas carry one `sequence` per change.
+    let sequence = data["sequence"].as_u64();
     vec![DataMessage::OrderBook(OrderBookData {
         symbol: symbol.to_string(),
         exchange: exchange.to_string(),
@@ -497,6 +502,8 @@ fn parse_level2_delta(symbol: &str, exchange: &str, data: &Value) -> Vec<DataMes
         exchange_ts,
         receipt_ts: chrono::Utc::now().timestamp_millis(),
         is_snapshot: false,
+        first_update_id: sequence,
+        last_update_id: sequence,
     })]
 }
 

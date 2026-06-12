@@ -17,6 +17,12 @@ categories    = ["api-bindings", "network-programming", "asynchronous"]
 # `tests/`, `examples/`, README, CHANGELOG, and LICENSE still ship.
 exclude = ["todo.md", "scripts/", "lint_report.md", "lint_report_bin", "/.github"]
 
+# docs.rs builds with every exchange enabled so the optional connectors
+# appear in the published docs; `docsrs` gates nightly-only doc features.
+[package.metadata.docs.rs]
+all-features = true
+rustdoc-args = ["--cfg", "docsrs"]
+
 [features]
 # Default-features enable all exchanges so existing users see no change.
 # Downstream crates that only need a subset can opt out via

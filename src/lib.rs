@@ -83,6 +83,7 @@
 //! │   └── types    — WsToken, WsMessage
 //! ├── actors   — ExchangeConnector trait, DataMessage and all data types
 //! ├── auth     — HMAC-SHA256 signing (key version 2, KuCoin-specific)
+//! ├── book     — LocalOrderBook: snapshot+delta assembly with gap detection
 //! ├── client   — KuCoinClient (KuCoin-signed HTTP), Credentials
 //! ├── http     — PublicRestClient (unauthenticated HTTP); shared helpers
 //! ├── error    — ExchangeError, Result
@@ -94,6 +95,7 @@
 
 pub mod actors;
 pub mod auth;
+pub mod book;
 pub mod client;
 pub mod connectors;
 pub mod error;
@@ -188,6 +190,9 @@ pub mod prelude {
         FundingData, InstrumentEvent, OrderBookData, OrderUpdate, PositionChange, TickerData,
         TradeData, TradeSide, WebSocketConfig,
     };
+
+    // Local order-book maintenance.
+    pub use crate::book::{BookApply, LocalOrderBook};
 
     // WS runner + supervised feed + observability.
     pub use crate::ws::{
