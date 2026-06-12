@@ -105,6 +105,22 @@ pub struct OrderBookData {
     pub receipt_ts: i64,
     /// `true` for a full snapshot, `false` for an incremental delta.
     pub is_snapshot: bool,
+    /// Sequence number of the **first** update covered by this message,
+    /// when the venue provides book sequencing (Binance `U`, OKX
+    /// `prevSeqId + 1`, Crypto.com `pu + 1`, KuCoin `sequence`).
+    ///
+    /// `None` when the venue doesn't expose a usable sequence (Kraken v2
+    /// books carry only a checksum; Coinbase `sequence_num` is
+    /// per-connection, not per-book). Feed messages into
+    /// [`LocalOrderBook`](crate::book::LocalOrderBook) for gap detection.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub first_update_id: Option<u64>,
+    /// Sequence number of the **last** update covered by this message
+    /// (Binance `u` / `lastUpdateId`, Bybit `u`, OKX `seqId`, Crypto.com
+    /// `u`, KuCoin `sequence`). Equal to `first_update_id` on venues that
+    /// stamp one ID per message. See [`Self::first_update_id`].
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub last_update_id: Option<u64>,
 }
 
 /// A candlestick / OHLCV bar from a public market data feed.

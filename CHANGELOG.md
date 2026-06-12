@@ -6,6 +6,28 @@ and the project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.
 
 ## [Unreleased]
 
+### Added
+
+- **`LocalOrderBook`** (`exchange_apiws::book`, re-exported in the prelude) —
+  assembles connector snapshot + delta streams into a synchronized local book.
+  `apply()` reports `Snapshot` / `Delta` / `AwaitingSnapshot` / `Stale` /
+  `Gap { expected, got }`; on a gap the book marks itself unsynced and ignores
+  deltas until re-seeded with a snapshot. Accessors: `best_bid` / `best_ask`,
+  `bids(depth)` / `asks(depth)` (best-first), `spread`, `mid_price`,
+  `is_crossed`, `is_synced`, and a full `snapshot()` export. Zero-quantity
+  levels are removed, matching the documented `OrderBookData` delta contract.
+- **Sequence IDs on `OrderBookData`** — new optional `first_update_id` /
+  `last_update_id` fields (serde-defaulted, so existing serialized data still
+  parses) populated per venue: Binance `U`/`u` and partial-book
+  `lastUpdateId`, Bybit `u`, OKX `prevSeqId`/`seqId`, Crypto.com `pu`/`u`
+  (delta subscriptions), KuCoin futures level2 `sequence`. Kraken v2
+  (checksum-only) and Coinbase (per-connection sequence) remain `None`.
+  *Note:* adding public fields is technically breaking for code constructing
+  `OrderBookData` literals; set both to `None` to keep prior behaviour.
+- **docs.rs metadata** — `[package.metadata.docs.rs]` with
+  `all-features = true`, so the optional exchange connectors appear in the
+  published documentation.
+
 ### Fixed
 
 - **`WsOrderClient::close()` now actually tears the connection down.**
