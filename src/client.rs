@@ -210,8 +210,9 @@ impl KuCoinClient {
         let body_str = body.unwrap_or("");
         let mut last_err: Option<ExchangeError> = None;
         let mut rate_limit_hits: u32 = 0;
+        let mut attempt: u32 = 0;
 
-        for attempt in 0..retries {
+        while attempt < retries {
             let headers = build_headers(
                 &self.creds.key,
                 &self.creds.secret,
@@ -282,6 +283,7 @@ impl KuCoinClient {
                     );
                     tokio::time::sleep(Duration::from_secs_f64(wait)).await;
                     last_err = Some(ExchangeError::Http(e));
+                    attempt += 1;
                 }
                 Err(e) => return Err(ExchangeError::Http(e)),
             }

@@ -9,7 +9,8 @@
 //! | `concurrent_requests_route_by_client_oid` | many in-flight requests resolve to the right futures |
 //! | `error_frame_resolves_as_failure` | `"type":"error"` returns `success = false` with code/msg |
 //! | `request_times_out_when_no_ack` | server silence triggers the 1 s test timeout |
-//! | `close_drops_pending_requests` | `close()` resolves outstanding awaits with `connection_closed` |
+//! | `close_drops_pending_requests` | a server-side close resolves outstanding awaits |
+//! | `client_close_fails_pending_requests_promptly` | `close()` resolves pending awaits without waiting for the timeout |
 //!
 //! Run with:
 //! ```text
@@ -272,5 +273,59 @@ async fn close_drops_pending_requests() {
             );
         }
         other => panic!("expected close-related result, got {other:?}"),
+    }
+}
+
+#[tokio::test]
+async fn client_close_fails_pending_requests_promptly() {
+    let (url, listener) = bind_local().await;
+
+    // Server accepts and stays silent — never acks, never closes. Only a
+    // client-side `close()` can resolve the pending request.
+    tokio::spawn(async move {
+        let (stream, _) = listener.accept().await.unwrap();
+        let mut ws = accept_async(stream).await.unwrap();
+        while let Some(frame) = ws.next().await {
+            if matches!(frame, Ok(Message::Close(_)) | Err(_)) {
+                break;
+            }
+        }
+    });
+
+    // Generous request timeout so the test only passes if `close()` itself
+    // resolves the pending request, not the timeout.
+    let client = WsOrderClient::connect(url)
+        .await
+        .expect("connect")
+        .with_request_timeout(Duration::from_secs(30));
+
+    let inflight = client.clone();
+    let pending = tokio::spawn(async move {
+        inflight
+            .place_order("XBTUSDTM", Side::Buy, 1, 10, OrderType::Market, None)
+            .await
+    });
+
+    // Let the request reach the wire, then tear down.
+    tokio::time::sleep(Duration::from_millis(100)).await;
+    client.close();
+    assert!(client.is_closed());
+
+    let result = tokio::time::timeout(Duration::from_secs(2), pending)
+        .await
+        .expect("close() must resolve the pending request promptly")
+        .expect("task join");
+    let ack = result.expect("pending request resolves with a sentinel ack");
+    assert!(!ack.success);
+    assert_eq!(ack.error_code.as_deref(), Some("connection_closed"));
+
+    // New requests after close() fail fast instead of queueing.
+    let err = client
+        .place_order("XBTUSDTM", Side::Buy, 1, 10, OrderType::Market, None)
+        .await
+        .expect_err("closed client must reject new requests");
+    match err {
+        ExchangeError::Order(msg) => assert!(msg.contains("closed"), "unexpected msg: {msg}"),
+        other => panic!("expected Order error, got {other:?}"),
     }
 }
