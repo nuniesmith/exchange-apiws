@@ -199,8 +199,8 @@ impl LocalOrderBook {
     /// Record symbol/exchange/timestamp from an applied message.
     fn note_source(&mut self, msg: &OrderBookData) {
         if self.symbol.is_empty() {
-            self.symbol = msg.symbol.clone();
-            self.exchange = msg.exchange.clone();
+            self.symbol.clone_from(&msg.symbol);
+            self.exchange.clone_from(&msg.exchange);
         }
         self.exchange_ts = msg.exchange_ts;
     }
