@@ -176,6 +176,25 @@ impl KuCoinClient {
         Ok(())
     }
 
+    /// Set the margin mode for `symbol` to `"ISOLATED"` or `"CROSS"`.
+    ///
+    /// KuCoin requires a futures order's margin mode to match the symbol's
+    /// configured mode, rejecting a mismatch with error 330005. Set this
+    /// explicitly (on a flat symbol with no open orders) before trading.
+    /// **Isolated** caps the loss on a position to its own margin; **cross**
+    /// shares the whole wallet and can drain the account on one bad trade.
+    ///
+    /// Endpoint: `POST /api/v2/position/changeMarginMode`
+    pub async fn set_margin_mode(&self, symbol: &str, margin_mode: &str) -> Result<()> {
+        self.post::<serde_json::Value>(
+            "/api/v2/position/changeMarginMode",
+            &json!({ "symbol": symbol, "marginMode": margin_mode }),
+        )
+        .await?;
+        info!(symbol, margin_mode, "margin mode updated");
+        Ok(())
+    }
+
     /// Change the risk limit level for `symbol`.
     ///
     /// KuCoin defines risk limit tiers (level 1, 2, 3 …) per symbol. Each higher
