@@ -10,6 +10,21 @@ use crate::client::KuCoinClient;
 use crate::error::{ExchangeError, Result};
 use crate::types::{OrderType, STP, Side, TimeInForce};
 
+/// Deserialize an `f64` from either a JSON number or a JSON string. KuCoin
+/// returns many numeric fields (e.g. a fill's `fee` and `price`) as strings.
+fn de_f64_flexible<'de, D: serde::Deserializer<'de>>(d: D) -> std::result::Result<f64, D::Error> {
+    #[derive(Deserialize)]
+    #[serde(untagged)]
+    enum StrOrNum {
+        Str(String),
+        Num(f64),
+    }
+    match StrOrNum::deserialize(d)? {
+        StrOrNum::Str(s) => s.trim().parse::<f64>().map_err(serde::de::Error::custom),
+        StrOrNum::Num(n) => Ok(n),
+    }
+}
+
 // ── Response types ─────────────────────────────────────────────────────────────
 
 /// Minimal order placement response.
@@ -84,10 +99,12 @@ pub struct Fill {
     /// Fill side — `"buy"` or `"sell"`.
     pub side: String,
     /// Execution price.
+    #[serde(deserialize_with = "de_f64_flexible")]
     pub price: f64,
     /// Quantity filled in contracts.
     pub size: u32,
     /// Fee charged for this fill.
+    #[serde(deserialize_with = "de_f64_flexible")]
     pub fee: f64,
     /// Currency the fee was charged in.
     pub fee_currency: Option<String>,
