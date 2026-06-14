@@ -65,6 +65,7 @@ impl CryptocomPrivateClient {
         credentials: CryptocomCredentials,
         base_url: impl Into<String>,
     ) -> Result<Self> {
+        crate::tls::ensure_crypto_provider();
         let http = Client::builder()
             .timeout(Duration::from_secs(DEFAULT_HTTP_TIMEOUT_SECS))
             .build()

@@ -179,6 +179,7 @@ impl BybitPrivateClient {
     /// Returns [`ExchangeError::Http`] if the underlying HTTP client fails to
     /// build.
     pub fn new(creds: BybitCredentials, testnet: bool) -> Result<Self> {
+        crate::tls::ensure_crypto_provider();
         let base_url = if testnet { TESTNET } else { MAINNET }.to_string();
         Ok(Self {
             base_url,

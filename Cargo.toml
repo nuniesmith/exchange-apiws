@@ -1,6 +1,6 @@
 [package]
 name          = "exchange-apiws"
-version       = "0.8.0"
+version       = "0.8.1"
 edition       = "2024"
 rust-version  = "1.94.1"
 authors       = ["nuniesmith"]
@@ -54,8 +54,18 @@ testutils = []
 tokio = { version = "1.51.1", features = ["rt-multi-thread", "macros", "time"] }
 
 # HTTP — use rustls so the crate builds on musl/Alpine without OpenSSL.
-# Disable default-features to drop the default OpenSSL backend.
-reqwest = { version = "0.13.2", default-features = false, features = ["json"] }
+# Disable default-features to drop the default OpenSSL backend, then enable the
+# rustls backend explicitly. `rustls-no-provider` brings in the rustls TLS stack
+# plus `rustls-platform-verifier` for CA roots WITHOUT a crypto provider — so we
+# avoid `aws-lc-rs` (needs cmake + clang, breaks slim/musl Docker builds). The
+# `ring` provider is supplied by the direct `rustls` dep below and installed at
+# runtime by `tls::ensure_crypto_provider`.
+reqwest = { version = "0.13.2", default-features = false, features = ["json", "rustls-no-provider"] }
+
+# rustls crypto provider for reqwest's `rustls-no-provider` backend. Pin to the
+# pure-Rust `ring` provider (NOT aws-lc-rs) so the crate compiles with no C
+# toolchain; `tls::ensure_crypto_provider` installs it as the process default.
+rustls = { version = "0.23", default-features = false, features = ["ring"] }
 
 # WebSocket — rustls-tls-native-roots uses the OS trust store so wss:// works out of the box.
 tokio-tungstenite = { version = "0.29.0", features = ["rustls-tls-native-roots"] }
