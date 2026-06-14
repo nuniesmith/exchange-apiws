@@ -415,10 +415,19 @@ fn parse_ticker(symbol: &str, exchange: &str, data: &Value) -> Vec<DataMessage> 
         .or_else(|| data["time"].as_i64())
         .unwrap_or_else(|| chrono::Utc::now().timestamp_millis());
 
+    // KuCoin futures tickerV2 carries no `price` field — only bestBid/AskPrice —
+    // so `str_f64(data, "price")` yields 0.0, which can false-trigger downstream
+    // price-threshold logic (e.g. stop-losses). Fall back to the bid/ask mid.
+    let price = match str_f64(data, "price") {
+        p if p > 0.0 => p,
+        _ if best_bid > 0.0 && best_ask > 0.0 => 0.5 * (best_bid + best_ask),
+        p => p,
+    };
+
     vec![DataMessage::Ticker(TickerData {
         symbol: symbol.to_string(),
         exchange: exchange.to_string(),
-        price: str_f64(data, "price"),
+        price,
         best_bid,
         best_ask,
         exchange_ts,
@@ -729,5 +738,38 @@ mod tests {
         assert_eq!(u.match_price, None);
         assert_eq!(u.match_size, None);
         assert_eq!(u.trade_id, None);
+    }
+
+    #[test]
+    fn futures_ticker_v2_without_price_uses_bid_ask_mid() {
+        // tickerV2 has no `price` field — only bestBid/AskPrice. The parser must
+        // emit the mid, not 0.0 (which would false-trigger price thresholds).
+        let data = json!({
+            "symbol": "XBTUSDTM",
+            "bestBidPrice": "64000.0",
+            "bestAskPrice": "64002.0",
+            "ts": 1_700_000_000_000_000_000i64,
+        });
+        let DataMessage::Ticker(t) = &parse_ticker("XBTUSDTM", "kucoin", &data)[0] else {
+            panic!("expected a Ticker message");
+        };
+        assert!((t.price - 64001.0).abs() < 1e-9, "price must be the bid/ask mid");
+        assert!((t.best_bid - 64000.0).abs() < 1e-9);
+        assert!((t.best_ask - 64002.0).abs() < 1e-9);
+    }
+
+    #[test]
+    fn ticker_with_explicit_price_is_preserved() {
+        // A ticker that does carry `price` (spot / v1) keeps it — no mid override.
+        let data = json!({
+            "symbol": "BTC-USDT",
+            "price": "63000.0",
+            "bestBid": "62999.0",
+            "bestAsk": "63001.0",
+        });
+        let DataMessage::Ticker(t) = &parse_ticker("BTC-USDT", "kucoin", &data)[0] else {
+            panic!("expected a Ticker message");
+        };
+        assert!((t.price - 63000.0).abs() < 1e-9, "explicit price must be preserved");
     }
 }
