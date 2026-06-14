@@ -6,6 +6,28 @@ and the project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.
 
 ## [Unreleased]
 
+## [0.8.1] - 2026-06-14
+
+### Fixed
+
+- **HTTPS requests now work out of the box — the crate ships a TLS backend.**
+  `reqwest` was declared with `default-features = false, features = ["json"]`,
+  which enables **no** TLS backend. Every client built via
+  `Client::builder().build()` (`PublicRestClient`, `KuCoinClient`, and the
+  signed Binance / Bybit / Kraken / Crypto.com private REST clients) therefore
+  failed instantly on any `https://` call with `error sending request for url`
+  — the crate only appeared to work when a downstream consumer happened to
+  enable a reqwest TLS feature itself via Cargo feature unification. The
+  `reqwest` dependency now enables the `rustls-no-provider` backend (rustls TLS
+  + `rustls-platform-verifier` for CA roots) and a direct `rustls` dependency
+  supplies the pure-Rust **`ring`** crypto provider. `ring` is used deliberately
+  instead of `aws-lc-rs`, which needs a C toolchain (cmake + clang) and breaks
+  slim/musl Docker builds. Because `rustls-no-provider` installs no default
+  crypto provider, a new idempotent `tls::ensure_crypto_provider()` helper (also
+  re-exported at the crate root) installs the `ring` provider as the process
+  default and is called as the first line of every reqwest client constructor,
+  so the crate is self-contained and needs no setup from the host binary.
+
 ## [0.8.0] - 2026-06-14
 
 ### Added

@@ -101,6 +101,7 @@ pub mod connectors;
 pub mod error;
 pub mod http;
 pub mod rest;
+pub mod tls;
 pub mod types;
 pub mod ws;
 
@@ -142,6 +143,7 @@ pub use cryptocom::{
 };
 pub use error::{ExchangeError, Result};
 pub use http::PublicRestClient;
+pub use tls::ensure_crypto_provider;
 #[cfg(feature = "kraken")]
 pub use kraken::{KrakenConnector, KrakenCredentials, KrakenPrivateClient, KrakenRestClient};
 #[cfg(feature = "okx")]

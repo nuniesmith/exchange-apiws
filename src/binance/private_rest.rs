@@ -73,6 +73,7 @@ impl BinanceUserDataRest {
     ///
     /// As [`new`](Self::new).
     pub fn with_base_url(api_key: impl Into<String>, base_url: impl Into<String>) -> Result<Self> {
+        crate::tls::ensure_crypto_provider();
         Ok(Self {
             api_key: api_key.into(),
             base_url: base_url.into(),

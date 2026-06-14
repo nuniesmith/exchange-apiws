@@ -150,6 +150,7 @@ impl PublicRestClient {
     /// Returns [`ExchangeError::Config`] if the underlying `reqwest` client
     /// cannot be built.
     pub fn with_timeout(base_url: impl Into<String>, timeout: Duration) -> Result<Self> {
+        crate::tls::ensure_crypto_provider();
         let http = Client::builder()
             .timeout(timeout)
             .build()

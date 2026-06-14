@@ -106,6 +106,7 @@ impl KuCoinClient {
     /// Returns [`ExchangeError::Config`] if the underlying `reqwest` HTTP
     /// client cannot be built (e.g. TLS initialisation failure).
     pub fn with_base_url(creds: Credentials, base_url: impl Into<String>) -> Result<Self> {
+        crate::tls::ensure_crypto_provider();
         let http = Client::builder()
             .timeout(Duration::from_secs(10))
             .build()
