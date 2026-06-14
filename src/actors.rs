@@ -303,7 +303,74 @@ pub trait ExchangeConnector: Send + Sync {
 
 /// A fill or status-change event for an order on the private feed.
 ///
-/// Emitted on `/contractMarket/tradeOrders` (Futures).
+/// Emitted on KuCoin's `/contractMarket/tradeOrders` (Futures) and the
+/// equivalent private order/execution streams of the other venues.
+///
+/// # ⚠️ Per-venue fill semantics — read before computing PnL
+///
+/// The per-execution fill fields — [`match_price`](Self::match_price),
+/// [`match_size`](Self::match_size), and [`trade_id`](Self::trade_id) — are
+/// **populated differently by each venue**. Some deliver state changes and
+/// fills on one event; others split them across two separate streams. A
+/// consumer that computes realized PnL or an average fill price from a
+/// **single** stream will silently miss fills on the split venues.
+///
+/// | Venue | How fills arrive | Where `match_*` is populated |
+/// |---|---|---|
+/// | **KuCoin** | one `tradeOrders` topic | `type:"match"` events |
+/// | **Binance** | one `executionReport` event | gated on `x == "TRADE"` (is-trade) |
+/// | **Kraken** | one `executions` event | gated on the execution being a fill (is-trade) |
+/// | **Bybit** | **split**: `order` topic (state) + `execution` topic (fills) | only on `execution` events |
+/// | **Crypto.com** | **split**: `user.order` (state) + `user.trade` (fills) | only on `user.trade` events |
+///
+/// On the **split** venues (Bybit, Crypto.com):
+/// - The state stream (`order` / `user.order`) emits an [`OrderUpdate`] with
+///   `match_price: None` / `match_size: None` / `trade_id: None` — it carries
+///   `status`, cumulative `filled_size`, etc., but **no per-fill detail**.
+/// - The fill stream (`execution` / `user.trade`) emits a **separate**
+///   [`OrderUpdate`] per execution, carrying `match_price` / `match_size` /
+///   `trade_id`. Because the fill event has no authoritative terminal status,
+///   the connectors synthesize `status: "partialFilled"` on it — the *true*
+///   final status (`filled` / `canceled`) rides on the state stream.
+///
+/// ## Consumer contract
+///
+/// To reconstruct realized PnL / VWAP fills correctly **on every venue**:
+/// 1. Subscribe to **both** streams (the per-exchange private connectors do
+///    this for you — e.g. `BybitPrivateConnector` subscribes to both `order`
+///    and `execution`; `CryptocomUserConnector` to both `user.order` and
+///    `user.trade`).
+/// 2. Accumulate fills from events where `match_price`/`match_size` are
+///    `Some`, and **de-duplicate / key on [`trade_id`](Self::trade_id)** — it
+///    is the stable per-execution id and prevents double-counting across
+///    reconnects or overlapping snapshots.
+/// 3. Take the authoritative order lifecycle (`status`, `filled_size`,
+///    `remaining_size`) from the events where the match fields are `None`.
+///
+/// ```no_run
+/// use exchange_apiws::actors::OrderUpdate;
+/// use std::collections::HashSet;
+///
+/// // Realized-fill accumulator that works uniformly across all venues:
+/// // count only events that carry per-fill detail, keyed on trade_id.
+/// fn on_order_update(
+///     seen: &mut HashSet<String>,
+///     notional: &mut f64,
+///     u: &OrderUpdate,
+/// ) {
+///     if let (Some(px), Some(sz), Some(id)) = (u.match_price, u.match_size, u.trade_id.as_ref())
+///     {
+///         // `id` de-dups: the same fill may be replayed after a reconnect.
+///         if seen.insert(id.clone()) {
+///             *notional += px * sz;
+///         }
+///     }
+///     // Events with `match_price == None` are state-only (Bybit `order`,
+///     // Crypto.com `user.order`, non-trade Binance/Kraken reports): read
+///     // `u.status` / `u.filled_size` from them, not fills.
+/// }
+/// # let _ = on_order_update;
+/// ```
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct OrderUpdate {
     /// Instrument symbol.
@@ -332,14 +399,27 @@ pub struct OrderUpdate {
     /// Cumulative fee charged for fills so far.
     pub fee: f64,
     /// Per-execution **match price** — the actual fill price for this execution.
-    /// `Some` only on `type:"match"` events; `None` otherwise. Carries the true
-    /// fill price even for market orders, where [`price`](Self::price) is `0.0`.
+    /// Carries the true fill price even for market orders, where
+    /// [`price`](Self::price) is `0.0`.
+    ///
+    /// `Some` **only on fill events**, `None` otherwise — and which events
+    /// those are depends on the venue (see the type-level "Per-venue fill
+    /// semantics" table): KuCoin `type:"match"`, Binance/Kraken is-trade
+    /// reports, Bybit's `execution` topic, Crypto.com's `user.trade`. On the
+    /// split venues (Bybit, Crypto.com) the order *state* stream always leaves
+    /// this `None`.
     pub match_price: Option<f64>,
     /// Per-execution **match size**, in the same units as [`size`](Self::size).
-    /// `Some` only on `match` events.
+    /// `Some` on the same fill events as [`match_price`](Self::match_price),
+    /// `None` on state-only events.
     pub match_size: Option<f64>,
-    /// Exchange trade id for this execution. `Some` only on `match` events — a
-    /// stable key for de-duplicating fills off the feed.
+    /// Exchange trade id for this execution — a stable key for de-duplicating
+    /// fills off the feed. `Some` on the same fill events as
+    /// [`match_price`](Self::match_price), `None` on state-only events.
+    ///
+    /// **Key realized-PnL accumulation on this id** so a fill replayed after a
+    /// reconnect (or seen on both an initial snapshot and a live event) is
+    /// counted once.
     pub trade_id: Option<String>,
     /// Exchange timestamp in milliseconds.
     pub exchange_ts: i64,
