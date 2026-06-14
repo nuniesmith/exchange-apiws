@@ -60,9 +60,24 @@ Two things genuinely matter at this size, and the bot is built around them:
    `0.001 BTC`. At BTC ≈ \$65k that's ~\$65 notional, needing ~\$65 margin at 1×
    — more than \$38. So with \$38 you **cannot open even the minimum position at
    1×**; you need roughly **2–3×** just to place one contract. The bot defaults
-   to **3×** and a **−3 % stop** (which triggers *long* before a 3× liquidation
-   ~−33 %), and it refuses to enter if it can't afford a contract rather than
-   erroring at the exchange.
+   to **5×** (`DIP_LEVERAGE`), and refuses to enter if it can't afford a contract
+   rather than erroring at the exchange.
+
+   **Pick leverage with the liquidation distance in mind — the stop only saves
+   you if it triggers *before* liquidation.** Isolated-long liquidation sits
+   roughly `1/leverage` below entry:
+
+   | Leverage | ≈ Liquidation | Safe stop-loss |
+   |---|---|---|
+   | 5× | ~−20 % | −3 % default is very safe |
+   | 10× | ~−10 % | keep stop ≤ ~−5 % |
+   | 20× | ~−5 % | keep stop ≤ ~−2.5 %, watch wicks |
+
+   The bot computes your actual liquidation price from the contract's
+   maintenance-margin rate and **warns at startup if your stop-loss is at or
+   near liquidation** for the chosen leverage. Higher leverage = smaller moves
+   liquidate you, so size down and keep the stop well inside the liquidation
+   distance.
 
    It also means **"sell 90 % / keep 10 %" can't run on a 1-contract position** —
    you can't sell 0.9 of a contract. When the position is too small to split,
@@ -132,7 +147,7 @@ position — manage that yourself or let the stop/take-profit handle it.
 | `DIP_RSI_OVERSOLD` | `30` | Oversold level; entry on a cross up through it. |
 | `DIP_TREND_EMA_PERIOD` | `200` | Trend filter EMA period. |
 | `DIP_TREND_FILTER` | `1` | `0` to buy dips regardless of trend. |
-| `DIP_LEVERAGE` | `3` | Per-order leverage. |
+| `DIP_LEVERAGE` | `5` | Per-order leverage (5–20× typical; mind liquidation). |
 | `DIP_RISK_FRACTION` | `0.90` | Fraction of balance used as margin per entry. |
 | `DIP_MAX_CONTRACTS` | `50` | Hard cap on position size. |
 | `DIP_TAKE_PROFIT_PCT` | `0.02` | Take-profit, +2 % above entry. |

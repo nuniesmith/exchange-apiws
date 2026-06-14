@@ -33,7 +33,10 @@ pub struct Config {
     pub use_trend_filter: bool,
 
     /// Leverage requested per order. With a ~$38 account this has to be ≥ ~2–3
-    /// just to afford KuCoin's 1-contract minimum on BTC — see the README.
+    /// just to afford KuCoin's 1-contract minimum on BTC; 5–20× is a common
+    /// range. Higher leverage shrinks the liquidation distance (~1/leverage),
+    /// so the stop-loss must stay well inside it — the bot warns if it doesn't.
+    /// See the README.
     pub leverage: u32,
     /// Fraction of available balance to commit as margin on an entry.
     pub risk_fraction: f64,
@@ -68,7 +71,7 @@ impl Default for Config {
             rsi_oversold: 30.0,
             trend_ema_period: 200,
             use_trend_filter: true,
-            leverage: 3,
+            leverage: 5,
             risk_fraction: 0.90,
             max_contracts: 50,
             take_profit_pct: 0.02,

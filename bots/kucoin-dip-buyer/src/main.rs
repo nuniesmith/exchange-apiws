@@ -96,7 +96,10 @@ async fn main() -> Result<()> {
         .map(|c| c.close)
         .unwrap_or(0.0);
 
-    print_banner(&cfg, mult, balance, price0);
+    // Maintenance-margin rate sets how far below entry liquidation sits; fall
+    // back to a typical 0.5 % if the contract doesn't report one.
+    let maint_margin = contract.maint_margin_rate.unwrap_or(0.005);
+    print_banner(&cfg, mult, balance, price0, maint_margin);
 
     // ── Public WebSocket ticker feed (live price) ──────────────────────────
     // Supervised runner: it re-negotiates the token and resubscribes whenever a
@@ -393,13 +396,18 @@ fn closed_closes(mut candles: Vec<Candle>, gran: &str) -> Vec<f64> {
 
 /// Print a one-screen summary of the run, with the affordability + risk notes
 /// that matter most for a tiny account.
-fn print_banner(cfg: &Config, mult: f64, balance: f64, price0: f64) {
+fn print_banner(cfg: &Config, mult: f64, balance: f64, price0: f64, maint_margin: f64) {
     let margin_one = price0 * mult / f64::from(cfg.leverage);
     let affordable = if margin_one > 0.0 {
         ((balance * 0.98) / margin_one).floor() as i64
     } else {
         0
     };
+    // Approx isolated-long liquidation distance below entry: 1/leverage minus
+    // the maintenance-margin rate (ignores fees, so the real liquidation is a
+    // touch closer). This is what the stop-loss has to stay inside of.
+    let liq_dist = (1.0 / f64::from(cfg.leverage) - maint_margin).max(0.0);
+    let liq_price = price0 * (1.0 - liq_dist);
 
     eprintln!("──────────────────────────────────────────────────────────────");
     eprintln!(" KuCoin dip-buyer — {}", if cfg.live { "*** LIVE TRADING ***" } else { "DRY-RUN (no orders sent)" });
@@ -417,6 +425,8 @@ fn print_banner(cfg: &Config, mult: f64, balance: f64, price0: f64) {
     eprintln!(" balance           {balance:.2} USDT   (price ~{price0:.0})");
     eprintln!(" 1 contract        ~{:.2} USDT notional, ~{margin_one:.2} USDT margin at {}x",
         price0 * mult, cfg.leverage);
+    eprintln!(" liquidation       long liquidates ~{liq_price:.0}  (~{:.1}% below entry, isolated)",
+        liq_dist * 100.0);
     eprintln!("──────────────────────────────────────────────────────────────");
 
     if affordable < 1 {
@@ -429,8 +439,20 @@ fn print_banner(cfg: &Config, mult: f64, balance: f64, price0: f64) {
             eprintln!("   the bot trails the whole position at take-profit instead.");
         }
     }
-    if cfg.leverage > 5 {
-        eprintln!(" ⚠  {}x leverage is high — a dip can liquidate before your stop. Consider 2–3x.", cfg.leverage);
+    // The stop-loss only protects you if it triggers *before* liquidation.
+    if liq_dist > 0.0 {
+        if cfg.stop_loss_pct >= liq_dist {
+            eprintln!(" ⚠  STOP-LOSS (-{:.1}%) is AT/BEYOND liquidation (~-{:.1}%) at {}x —",
+                cfg.stop_loss_pct * 100.0, liq_dist * 100.0, cfg.leverage);
+            eprintln!("    you'd be liquidated before the stop fills. Lower DIP_LEVERAGE or DIP_STOP_LOSS_PCT.");
+        } else if cfg.stop_loss_pct > 0.7 * liq_dist {
+            eprintln!(" ⚠  STOP-LOSS (-{:.1}%) is close to liquidation (~-{:.1}%) at {}x —",
+                cfg.stop_loss_pct * 100.0, liq_dist * 100.0, cfg.leverage);
+            eprintln!("    a fast wick could liquidate first. Leave more room (lower leverage / tighter stop).");
+        }
+    }
+    if cfg.leverage >= 10 {
+        eprintln!(" ⚠  {}x is very high leverage — moves are amplified; size down if unsure.", cfg.leverage);
     }
     if cfg.live {
         eprintln!(" ⚠  LIVE mode: real orders on real money. Ctrl-C stops the bot but");
