@@ -303,7 +303,7 @@ impl KuCoinClient {
     /// Pass `price = None` for a stop-market order, or `Some(limit_price)` for a
     /// stop-limit.
     ///
-    /// Endpoint: `POST /api/v1/stopOrders`
+    /// Endpoint: `POST /api/v1/orders` (with `stop`/`stopPrice`/`stopPriceType`).
     #[allow(clippy::similar_names)] // `side` and `size` are the correct public API parameter names
     pub async fn place_stop_order(
         &self,
@@ -318,21 +318,25 @@ impl KuCoinClient {
     ) -> Result<OrderResponse> {
         let order_type = if price.is_some() { "limit" } else { "market" };
         let mut body = json!({
-            "clientOid":  Uuid::new_v4().to_string(),
-            "side":       side.as_str(),
-            "symbol":     symbol,
-            "type":       order_type,
-            "size":       size,
-            "leverage":   leverage.to_string(),
-            "stop":       stop_type,
-            "stopPrice":  stop_price.to_string(),
-            "reduceOnly": reduce_only,
+            "clientOid":     Uuid::new_v4().to_string(),
+            "side":          side.as_str(),
+            "symbol":        symbol,
+            "type":          order_type,
+            "size":          size,
+            "leverage":      leverage.to_string(),
+            "stop":          stop_type,
+            "stopPrice":     stop_price.to_string(),
+            "stopPriceType": "MP", // trigger on mark price (standard for stop-losses)
+            "reduceOnly":    reduce_only,
         });
         if let Some(lp) = price {
             body["price"] = json!(lp.to_string());
         }
         info!(symbol, side = ?side, size, stop_price, stop_type, "placing stop order");
-        self.post("/api/v1/stopOrders", &body).await
+        // KuCoin Futures places (untriggered) stop orders through the regular
+        // orders endpoint with stop/stopPrice/stopPriceType; `/api/v1/stopOrders`
+        // is GET/DELETE only — POSTing there returns 400007 ("require more permission").
+        self.post("/api/v1/orders", &body).await
     }
 
     /// Cancel a stop order by its order ID.
