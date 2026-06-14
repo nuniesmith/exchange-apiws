@@ -25,6 +25,7 @@ use serde_json::Value;
 use super::auth::{BybitCredentials, DEFAULT_RECV_WINDOW};
 use super::rest::BybitCategory;
 use crate::error::{ExchangeError, Result};
+use crate::http::send_with_retry;
 
 const MAINNET: &str = "https://api.bybit.com";
 const TESTNET: &str = "https://api-testnet.bybit.com";
@@ -202,40 +203,52 @@ impl BybitPrivateClient {
     }
 
     /// Signed GET. `query` is the raw query string (no leading `?`).
+    ///
+    /// Wrapped in [`send_with_retry`] so a transient network error or HTTP 429
+    /// (honouring `Retry-After`) is retried with bounded backoff. The request
+    /// — including its fresh timestamp + signature — is rebuilt per attempt.
     async fn signed_get(&self, path: &str, query: &str) -> Result<reqwest::Response> {
-        let ts = Self::now_ms();
-        let sign = self.creds.sign_rest(ts, self.recv_window, query);
         let url = if query.is_empty() {
             format!("{}{path}", self.base_url)
         } else {
             format!("{}{path}?{query}", self.base_url)
         };
-        Ok(self
-            .http
-            .get(url)
-            .header("X-BAPI-API-KEY", &self.creds.api_key)
-            .header("X-BAPI-TIMESTAMP", ts.to_string())
-            .header("X-BAPI-RECV-WINDOW", self.recv_window.to_string())
-            .header("X-BAPI-SIGN", sign)
-            .send()
-            .await?)
+        let label = format!("Bybit GET {path}");
+        send_with_retry(&label, || {
+            // Re-sign per attempt: the timestamp is part of the signed payload,
+            // so a stale signature would be rejected on retry.
+            let ts = Self::now_ms();
+            let sign = self.creds.sign_rest(ts, self.recv_window, query);
+            self.http
+                .get(&url)
+                .header("X-BAPI-API-KEY", &self.creds.api_key)
+                .header("X-BAPI-TIMESTAMP", ts.to_string())
+                .header("X-BAPI-RECV-WINDOW", self.recv_window.to_string())
+                .header("X-BAPI-SIGN", sign)
+        })
+        .await
     }
 
     /// Signed POST with a JSON `body`.
+    ///
+    /// As [`signed_get`](Self::signed_get): retried via [`send_with_retry`]
+    /// with the signature rebuilt on each attempt.
     async fn signed_post(&self, path: &str, body: &str) -> Result<reqwest::Response> {
-        let ts = Self::now_ms();
-        let sign = self.creds.sign_rest(ts, self.recv_window, body);
-        Ok(self
-            .http
-            .post(format!("{}{path}", self.base_url))
-            .header("X-BAPI-API-KEY", &self.creds.api_key)
-            .header("X-BAPI-TIMESTAMP", ts.to_string())
-            .header("X-BAPI-RECV-WINDOW", self.recv_window.to_string())
-            .header("X-BAPI-SIGN", sign)
-            .header("Content-Type", "application/json")
-            .body(body.to_string())
-            .send()
-            .await?)
+        let url = format!("{}{path}", self.base_url);
+        let label = format!("Bybit POST {path}");
+        send_with_retry(&label, || {
+            let ts = Self::now_ms();
+            let sign = self.creds.sign_rest(ts, self.recv_window, body);
+            self.http
+                .post(&url)
+                .header("X-BAPI-API-KEY", &self.creds.api_key)
+                .header("X-BAPI-TIMESTAMP", ts.to_string())
+                .header("X-BAPI-RECV-WINDOW", self.recv_window.to_string())
+                .header("X-BAPI-SIGN", sign)
+                .header("Content-Type", "application/json")
+                .body(body.to_string())
+        })
+        .await
     }
 
     /// Place a new order. Returns the order ack on success.

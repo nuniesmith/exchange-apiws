@@ -27,6 +27,7 @@ use serde_json::Value;
 use tracing::{debug, info};
 
 use crate::error::{ExchangeError, Result};
+use crate::http::send_with_retry;
 use crate::kraken::auth::{KrakenCredentials, form_encode, sign_kraken_request};
 use crate::kraken::rest::unwrap_kraken_envelope;
 
@@ -314,34 +315,38 @@ impl KrakenPrivateClient {
     ///
     /// `params` is the form-body content WITHOUT the nonce — the client
     /// injects a fresh monotonic nonce at the front of the body.
+    ///
+    /// Wrapped in [`send_with_retry`] for transient-network + HTTP 429
+    /// (`Retry-After`) backoff. Each attempt mints a **fresh nonce** and
+    /// re-signs: Kraken rejects a reused nonce as a replay, so a retry must
+    /// not resend the previous attempt's signed body.
     async fn post<T: serde::de::DeserializeOwned>(
         &self,
         path: &str,
         params: &[(&str, &str)],
     ) -> Result<T> {
-        let nonce = self.next_nonce();
-        let nonce_str = nonce.to_string();
-
-        // Nonce must come first so the post-body string the server hashes
-        // matches what we sign. Kraken docs show nonce as the first field.
-        let mut all_params: Vec<(&str, &str)> = Vec::with_capacity(params.len() + 1);
-        all_params.push(("nonce", &nonce_str));
-        all_params.extend_from_slice(params);
-        let body = form_encode(&all_params);
-
-        let sig = sign_kraken_request(path, nonce, &body, &self.credentials.api_secret_b64)?;
+        // Sign once up front so a malformed-secret error surfaces immediately
+        // (and not buried inside the retry closure). The secret is fixed, so
+        // signing is deterministic — once this succeeds it cannot fail on a
+        // later attempt.
+        let _ = self.sign_body(path, params)?;
 
         debug!(path, "Kraken private POST");
         let url = format!("{}{path}", self.base_url);
-        let resp = self
-            .http
-            .post(&url)
-            .header("API-Key", &self.credentials.api_key)
-            .header("API-Sign", &sig)
-            .header("Content-Type", "application/x-www-form-urlencoded")
-            .body(body)
-            .send()
-            .await?;
+        let label = format!("Kraken POST {path}");
+        let resp = send_with_retry(&label, || {
+            // Fresh nonce + signature per attempt (nonce is replay-protected).
+            let (body, sig) = self
+                .sign_body(path, params)
+                .expect("Kraken signing is deterministic and was validated above");
+            self.http
+                .post(&url)
+                .header("API-Key", &self.credentials.api_key)
+                .header("API-Sign", sig)
+                .header("Content-Type", "application/x-www-form-urlencoded")
+                .body(body)
+        })
+        .await?;
 
         if !resp.status().is_success() {
             let code = resp.status().as_u16().to_string();
@@ -354,6 +359,26 @@ impl KrakenPrivateClient {
 
         let raw: Value = resp.json().await?;
         unwrap_kraken_envelope(raw)
+    }
+
+    /// Build a fresh nonce-prefixed form body and its Kraken signature.
+    ///
+    /// Returns `(post_body, api_sign)`. Each call mints a new monotonic nonce,
+    /// so successive calls produce distinct bodies/signatures — required for
+    /// retries, since Kraken rejects a reused nonce.
+    fn sign_body(&self, path: &str, params: &[(&str, &str)]) -> Result<(String, String)> {
+        let nonce = self.next_nonce();
+        let nonce_str = nonce.to_string();
+
+        // Nonce must come first so the post-body string the server hashes
+        // matches what we sign. Kraken docs show nonce as the first field.
+        let mut all_params: Vec<(&str, &str)> = Vec::with_capacity(params.len() + 1);
+        all_params.push(("nonce", &nonce_str));
+        all_params.extend_from_slice(params);
+        let body = form_encode(&all_params);
+
+        let sig = sign_kraken_request(path, nonce, &body, &self.credentials.api_secret_b64)?;
+        Ok((body, sig))
     }
 
     // ── Endpoints ───────────────────────────────────────────────────────────

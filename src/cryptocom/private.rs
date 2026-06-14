@@ -30,6 +30,7 @@ use tracing::{debug, info};
 use crate::cryptocom::auth::{CryptocomCredentials, sign_cryptocom_request};
 use crate::cryptocom::rest::unwrap_cryptocom_envelope;
 use crate::error::{ExchangeError, Result};
+use crate::http::send_with_retry;
 
 const BASE_URL: &str = "https://api.crypto.com/exchange/v1";
 const DEFAULT_HTTP_TIMEOUT_SECS: u64 = 10;
@@ -94,30 +95,28 @@ impl CryptocomPrivateClient {
     /// Sign and POST a private-API request. `method` is the wire method
     /// name (e.g. `"private/get-account-summary"`); the request `id` and
     /// `nonce` are injected by the client.
+    ///
+    /// Wrapped in [`send_with_retry`] for transient-network + HTTP 429
+    /// (`Retry-After`) backoff. Each attempt mints a **fresh id + nonce** and
+    /// re-signs, since Crypto.com replay-protects the nonce — a retry must not
+    /// resend the previous attempt's signed envelope.
     async fn post<T: serde::de::DeserializeOwned>(&self, method: &str, params: Value) -> Result<T> {
-        let id = self.next_id();
-        let nonce = self.next_nonce();
-        let sig = sign_cryptocom_request(
-            method,
-            id,
-            &self.credentials.api_key,
-            &params,
-            nonce,
-            &self.credentials.api_secret,
-        )?;
+        // Sign once up front so a signing (config) error surfaces immediately
+        // rather than from inside the retry closure. The secret is fixed, so
+        // signing is deterministic — once this succeeds it cannot fail later.
+        let _ = self.sign_body(method, &params)?;
 
-        let body = json!({
-            "id":      id,
-            "method":  method,
-            "api_key": self.credentials.api_key,
-            "params":  params,
-            "nonce":   nonce,
-            "sig":     sig,
-        });
-
-        debug!(method, id, "Crypto.com private POST");
+        debug!(method, "Crypto.com private POST");
         let url = format!("{}/{method}", self.base_url);
-        let resp = self.http.post(&url).json(&body).send().await?;
+        let label = format!("Crypto.com POST {method}");
+        let resp = send_with_retry(&label, || {
+            // Fresh id + nonce + signature per attempt (nonce is replay-protected).
+            let body = self
+                .sign_body(method, &params)
+                .expect("Crypto.com signing is deterministic and was validated above");
+            self.http.post(&url).json(&body)
+        })
+        .await?;
 
         if !resp.status().is_success() {
             let code = resp.status().as_u16().to_string();
@@ -130,6 +129,34 @@ impl CryptocomPrivateClient {
 
         let raw: Value = resp.json().await?;
         unwrap_cryptocom_envelope(raw)
+    }
+
+    /// Build a fully-signed request body (`id`/`method`/`api_key`/`params`/
+    /// `nonce`/`sig`) for `method`.
+    ///
+    /// Each call mints a new `id` and monotonic `nonce`, so successive calls
+    /// produce distinct, independently-signed envelopes — required for retries,
+    /// since Crypto.com rejects a reused nonce.
+    fn sign_body(&self, method: &str, params: &Value) -> Result<Value> {
+        let id = self.next_id();
+        let nonce = self.next_nonce();
+        let sig = sign_cryptocom_request(
+            method,
+            id,
+            &self.credentials.api_key,
+            params,
+            nonce,
+            &self.credentials.api_secret,
+        )?;
+
+        Ok(json!({
+            "id":      id,
+            "method":  method,
+            "api_key": self.credentials.api_key,
+            "params":  params,
+            "nonce":   nonce,
+            "sig":     sig,
+        }))
     }
 
     // ── Endpoints ────────────────────────────────────────────────────────────

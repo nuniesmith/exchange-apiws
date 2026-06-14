@@ -30,6 +30,20 @@ and the project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.
 
 ### Fixed
 
+- **The signed private REST clients now back off on HTTP 429.** Previously
+  `BybitPrivateClient`, `KrakenPrivateClient`, and `CryptocomPrivateClient`
+  issued a bare `reqwest` `.send()` with **no** rate-limit handling — a 429 (or
+  a transient network blip) surfaced immediately as an error on the live-order
+  money path, while only `KuCoinClient` and `PublicRestClient` honoured 429.
+  All three now route through a shared `http::send_with_retry` helper that
+  retries on HTTP 429 — honouring the standard `Retry-After` header and falling
+  back to jittered exponential backoff when it's absent — and on transient
+  network errors, with the same small bounded budget as the existing clients
+  (3 transient attempts; 429 sleeps capped separately so a real failure still
+  surfaces with an explicit "giving up" error). The request is **re-signed per
+  attempt** (fresh timestamp for Bybit; fresh nonce + signature for Kraken /
+  Crypto.com, whose nonces are replay-protected), so retries never resend a
+  stale, now-rejected signature. Success-path behaviour is unchanged.
 - **`WsOrderClient::close()` now actually tears the connection down.**
   Previously it only set a flag that neither background task observed until
   the next frame happened to arrive — pending requests waited out their full
@@ -44,6 +58,24 @@ and the project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.
   advanced anyway — making the dedicated `MAX_RATE_LIMIT_RETRIES` cap
   unreachable. Persistent 429s now exhaust the rate-limit cap (with its
   explicit "giving up" error) instead of silently eating the retry budget.
+
+### Documentation
+
+- **Documented the per-venue fill-event contract on `OrderUpdate`.** The
+  per-execution fields (`match_price` / `match_size` / `trade_id`) arrive
+  differently per venue, and consumers computing realized PnL / average fill
+  must account for it: **Binance** and **Kraken** populate them on a single
+  execution event (gated on the event being a trade); **Bybit** *splits* it —
+  the `order` topic carries state with `match_price: None` while a separate
+  `execution` topic carries fills (with a synthesized `status: "partialFilled"`)
+  — and **Crypto.com** splits `user.order` (state) vs `user.trade` (fills) the
+  same way. The `OrderUpdate` rustdoc now spells out the table, states that
+  consumers MUST subscribe to **both** streams and **key fills on `trade_id`**
+  (to de-dup across reconnects), and includes a venue-agnostic accumulator
+  example. No behaviour change — the connectors already subscribe to both
+  streams; this documents the contract. The README per-exchange coverage matrix
+  was also stale (listing Bybit / Crypto.com as public-only) and now reflects
+  their signed REST + private WebSocket surface.
 
 ### Changed
 

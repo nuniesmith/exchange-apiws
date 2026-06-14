@@ -14,10 +14,10 @@ reconnect, rate limiting, heartbeats, and supervised token refresh.
 | Exchange | Public REST | Private REST | Public WS | Private WS | Notes |
 |---|---|---|---|---|---|
 | **KuCoin** (Futures + Spot + UTA) | ✓ | ✓ | ✓ | ✓ | + `WsOrderClient` for low-latency order placement |
-| **Binance** | ✓ | — | ✓ | — | spot + USDT-M futures |
-| **Bybit** | ✓ | — | ✓ | — | v5 unified API (spot / linear / inverse) |
-| **Kraken** | ✓ | ✓ | ✓ | — | HMAC-SHA512 signing |
-| **Crypto.com** | ✓ | ✓ | ✓ | — | HMAC-SHA256 body-`sig` signing |
+| **Binance** | ✓ | ✓ | ✓ | ✓ | spot + USDT-M futures; `executionReport` user-data stream |
+| **Bybit** | ✓ | ✓ | ✓ | ✓ | v5 unified API (spot / linear / inverse); fills on a separate `execution` topic |
+| **Kraken** | ✓ | ✓ | ✓ | ✓ | HMAC-SHA512 signing; `executions` / `balances` v2 channels |
+| **Crypto.com** | ✓ | ✓ | ✓ | ✓ | HMAC-SHA256 body-`sig` signing; fills on a separate `user.trade` channel |
 
 The disconnection-hardening track lands `run_feed_supervised` (token-refresh
 on cascade), connect / idle timeouts, cascade-start WARN logging, and a
@@ -68,28 +68,33 @@ observability).
 | WS (Private) | order fills, position changes, balance updates, advanced (stop) orders |
 | WS (Order placement) | `WsOrderClient` — low-latency place/cancel with `clientOid` routing |
 
-#### Binance (public-only, no API keys)
+#### Binance
 
 | Layer | What's covered |
 |---|---|
 | REST (Spot) | klines, depth, recent trades, book ticker, 24h ticker, exchange info |
 | REST (Futures USDT-M) | klines, funding rate history, premium index / mark price, open interest |
-| WS | `<sym>@aggTrade`, `@bookTicker`, `@kline_<i>`, `@depth@100ms`, `@depth{5\|10\|20}@100ms`, `@markPrice@1s` |
+| REST (Private) | user-data listen-key lifecycle (create / keep-alive / close) |
+| WS (Public) | `<sym>@aggTrade`, `@bookTicker`, `@kline_<i>`, `@depth@100ms`, `@depth{5\|10\|20}@100ms`, `@markPrice@1s` |
+| WS (Private) | `executionReport` user-data stream → `OrderUpdate` (fill price/size on is-trade events), `outboundAccountPosition` → balances |
 
-#### Bybit (public-only, v5 API)
+#### Bybit (v5 API)
 
 | Layer | What's covered |
 |---|---|
-| REST | kline, orderbook, tickers, recent trades, instruments info, funding history, open interest, long/short ratio |
-| WS | `publicTrade.<sym>`, `tickers.<sym>`, `kline.<i>.<sym>`, `orderbook.<d>.<sym>` |
+| REST (Public) | kline, orderbook, tickers, recent trades, instruments info, funding history, open interest, long/short ratio |
+| REST (Private, HMAC-SHA256) | place / cancel order, open orders, positions, wallet balance |
+| WS (Public) | `publicTrade.<sym>`, `tickers.<sym>`, `kline.<i>.<sym>`, `orderbook.<d>.<sym>` |
+| WS (Private) | `order` (state) + `execution` (fills → `match_price`/`size`/`trade_id`) + `position` + `wallet` |
 
 #### Kraken (signed)
 
 | Layer | What's covered |
 |---|---|
 | REST (Public) | system status, assets, asset pairs, ticker, depth, OHLC, recent trades, spread |
-| REST (Private, HMAC-SHA512) | balance, open/closed orders, place/cancel/cancel-all order, trades history, ledger, withdraw, withdrawal status |
+| REST (Private, HMAC-SHA512) | balance, open/closed orders, place/cancel/cancel-all order, trades history, ledger, withdraw, withdrawal status, WS token |
 | WS (Public v2) | `trade`, `ticker`, `ohlc`, `book` |
+| WS (Private v2) | `executions` → `OrderUpdate` (fill price/size on trade executions), `balances` → balances |
 
 #### Crypto.com (signed)
 
@@ -98,6 +103,7 @@ observability).
 | REST (Public) | instruments, book, candlestick, ticker, trades, valuations (mark/funding/index) |
 | REST (Private, HMAC-SHA256 body-`sig`) | account summary, create/cancel order, cancel-all, open orders, order detail, trades, deposit address, create/list withdrawal |
 | WS (Public) | `trade.<inst>`, `ticker.<inst>`, `candlestick.<tf>.<inst>`, `book.<inst>.<d>` |
+| WS (Private) | `user.order` (state) + `user.trade` (fills → `match_price`/`size`/`trade_id`) + `user.balance` |
 
 ### Disconnection hardening
 
@@ -299,6 +305,29 @@ let subs = vec![
 // ... same run_feed setup as above
 ```
 
+#### ⚠️ Order fills arrive differently per venue
+
+The per-execution fill fields on `OrderUpdate` — `match_price`, `match_size`,
+`trade_id` — are **not populated the same way on every exchange**, so anything
+computing realized PnL or an average fill price must account for it:
+
+- **KuCoin / Binance / Kraken** deliver fills on a single order/execution
+  event — the match fields are `Some` on the fill (KuCoin `type:"match"`,
+  Binance / Kraken is-trade events) and `None` on pure state changes.
+- **Bybit** *splits* the stream: the `order` topic carries order **state**
+  (`match_price: None`) and a separate `execution` topic carries the **fills**
+  (with `match_price`/`size`/`trade_id`, and a synthesized
+  `status: "partialFilled"`).
+- **Crypto.com** splits the same way: `user.order` (state) vs `user.trade`
+  (fills).
+
+The per-exchange private connectors already subscribe to **both** streams, so
+all you do as a consumer is: accumulate from events where `match_price` is
+`Some`, **de-duplicate on `trade_id`**, and take order lifecycle (`status`,
+`filled_size`) from the events where it's `None`. See the
+[`OrderUpdate` rustdoc](https://docs.rs/exchange-apiws/latest/exchange_apiws/actors/struct.OrderUpdate.html)
+for the full per-venue table and a venue-agnostic accumulator example.
+
 ### Supervised WebSocket feed (token re-negotiation on cascade)
 
 `run_feed` retries inside one token. If the disconnect cause is a stale or
@@ -479,6 +508,8 @@ KuCoin enforces per-UID rate limits per resource pool. VIP0 Futures quota is 2,0
 - Retries transient failures with exponential backoff (3 attempts, 1.5× factor)
 - Reads the `gw-ratelimit-reset` header on HTTP 429 and sleeps for the exact reset window
 - Returns `ExchangeError::Api` with the KuCoin error code on non-200000 responses
+
+The signed private REST clients for the other venues (`BybitPrivateClient`, `KrakenPrivateClient`, `CryptocomPrivateClient`) and `PublicRestClient` share the same hardening via `http::send_with_retry`: bounded retries on transient network errors plus HTTP 429 handling that honours the standard `Retry-After` header (falling back to jittered exponential backoff when it's absent). The 429 sleeps are capped separately so a persistent rate limit still surfaces an explicit error rather than looping. Each retry is re-signed, so venues with replay-protected nonces (Kraken, Crypto.com) never resend a stale signature.
 
 ### WebSocket
 
