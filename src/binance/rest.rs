@@ -419,6 +419,123 @@ pub struct BinanceOpenInterest {
     pub time: i64,
 }
 
+/// Spot trading rules — `GET /api/v3/exchangeInfo`.
+///
+/// Only the fields needed for order validation are typed; the rest of the
+/// (large) response is ignored. Per-symbol tick/lot/min-notional come from the
+/// `filters` array — use the [`BinanceSymbolInfo`] accessors.
+#[derive(Debug, Clone, Deserialize)]
+pub struct BinanceExchangeInfo {
+    /// Per-symbol trading rules.
+    pub symbols: Vec<BinanceSymbolInfo>,
+}
+
+impl BinanceExchangeInfo {
+    /// Rules for `symbol` (exact match, e.g. `"BTCUSDT"`), if listed.
+    pub fn symbol(&self, symbol: &str) -> Option<&BinanceSymbolInfo> {
+        self.symbols.iter().find(|s| s.symbol == symbol)
+    }
+}
+
+/// Trading rules for one spot symbol.
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct BinanceSymbolInfo {
+    /// Instrument symbol, e.g. `"BTCUSDT"`.
+    pub symbol: String,
+    /// Trading status, e.g. `"TRADING"`.
+    pub status: String,
+    /// Base asset, e.g. `"BTC"`.
+    pub base_asset: String,
+    /// Base-asset decimal precision.
+    pub base_asset_precision: u32,
+    /// Quote asset, e.g. `"USDT"`.
+    pub quote_asset: String,
+    /// Quote-asset decimal precision.
+    pub quote_asset_precision: u32,
+    /// Order filters (price / lot / notional rules).
+    pub filters: Vec<BinanceSymbolFilter>,
+}
+
+impl BinanceSymbolInfo {
+    /// Price increment (tick size) from the `PRICE_FILTER`.
+    pub fn tick_size(&self) -> Option<f64> {
+        self.filters.iter().find_map(|f| match f {
+            BinanceSymbolFilter::PriceFilter { tick_size, .. } => Some(*tick_size),
+            _ => None,
+        })
+    }
+
+    /// Quantity increment (step size) from the `LOT_SIZE` filter.
+    pub fn lot_size(&self) -> Option<f64> {
+        self.filters.iter().find_map(|f| match f {
+            BinanceSymbolFilter::LotSize { step_size, .. } => Some(*step_size),
+            _ => None,
+        })
+    }
+
+    /// Minimum order notional from `NOTIONAL` (or legacy `MIN_NOTIONAL`).
+    pub fn min_notional(&self) -> Option<f64> {
+        self.filters.iter().find_map(|f| match f {
+            BinanceSymbolFilter::MinNotional { min_notional }
+            | BinanceSymbolFilter::Notional { min_notional, .. } => Some(*min_notional),
+            _ => None,
+        })
+    }
+}
+
+/// The subset of Binance symbol filters relevant to order validation.
+///
+/// Unknown filter types deserialize to [`BinanceSymbolFilter::Other`], so a new
+/// Binance filter never breaks parsing.
+#[derive(Debug, Clone, Deserialize)]
+#[serde(tag = "filterType")]
+pub enum BinanceSymbolFilter {
+    /// Price tick size + bounds.
+    #[serde(rename = "PRICE_FILTER", rename_all = "camelCase")]
+    PriceFilter {
+        /// Price increment.
+        #[serde(with = "str_f64")]
+        tick_size: f64,
+        /// Minimum price.
+        #[serde(with = "str_f64")]
+        min_price: f64,
+        /// Maximum price.
+        #[serde(with = "str_f64")]
+        max_price: f64,
+    },
+    /// Quantity step size + bounds.
+    #[serde(rename = "LOT_SIZE", rename_all = "camelCase")]
+    LotSize {
+        /// Quantity increment.
+        #[serde(with = "str_f64")]
+        step_size: f64,
+        /// Minimum order quantity.
+        #[serde(with = "str_f64")]
+        min_qty: f64,
+        /// Maximum order quantity.
+        #[serde(with = "str_f64")]
+        max_qty: f64,
+    },
+    /// Legacy minimum-notional filter.
+    #[serde(rename = "MIN_NOTIONAL", rename_all = "camelCase")]
+    MinNotional {
+        /// Minimum order notional (price × qty).
+        #[serde(with = "str_f64")]
+        min_notional: f64,
+    },
+    /// Current minimum-notional filter (replaces `MIN_NOTIONAL`).
+    #[serde(rename = "NOTIONAL", rename_all = "camelCase")]
+    Notional {
+        /// Minimum order notional (price × qty).
+        #[serde(with = "str_f64")]
+        min_notional: f64,
+    },
+    /// Any other filter type (ignored for order validation).
+    #[serde(other)]
+    Other,
+}
+
 // ── Client ────────────────────────────────────────────────────────────────────
 
 /// Binance public REST client — spot + USDT-M futures endpoints.
@@ -516,7 +633,7 @@ impl BinanceRestClient {
     /// are easier to extract on demand than to model statically; use
     /// [`serde_json::from_value`] with your own shape if you need typed
     /// access to specific fields.
-    pub async fn get_exchange_info(&self) -> Result<serde_json::Value> {
+    pub async fn get_exchange_info(&self) -> Result<BinanceExchangeInfo> {
         self.spot.get("/api/v3/exchangeInfo", &[]).await
     }
 
