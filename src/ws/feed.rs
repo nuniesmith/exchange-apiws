@@ -753,7 +753,10 @@ mod tests {
         let DataMessage::Ticker(t) = &parse_ticker("XBTUSDTM", "kucoin", &data)[0] else {
             panic!("expected a Ticker message");
         };
-        assert!((t.price - 64001.0).abs() < 1e-9, "price must be the bid/ask mid");
+        assert!(
+            (t.price - 64001.0).abs() < 1e-9,
+            "price must be the bid/ask mid"
+        );
         assert!((t.best_bid - 64000.0).abs() < 1e-9);
         assert!((t.best_ask - 64002.0).abs() < 1e-9);
     }
@@ -770,6 +773,9 @@ mod tests {
         let DataMessage::Ticker(t) = &parse_ticker("BTC-USDT", "kucoin", &data)[0] else {
             panic!("expected a Ticker message");
         };
-        assert!((t.price - 63000.0).abs() < 1e-9, "explicit price must be preserved");
+        assert!(
+            (t.price - 63000.0).abs() < 1e-9,
+            "explicit price must be preserved"
+        );
     }
 }
