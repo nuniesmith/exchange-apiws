@@ -24,6 +24,19 @@ jobs:
           components: rustfmt
       - run: cargo fmt --all --check
 
+  deny:
+    name: cargo deny (advisories / licenses / bans / sources)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo install cargo-deny --locked
+      # Supply-chain check (config: deny.toml). Non-blocking for now; drop
+      # continue-on-error to gate once the graph stays clean.
+      - run: cargo deny check
+        continue-on-error: true
+
   clippy:
     name: clippy
     runs-on: ubuntu-latest

@@ -1,0 +1,19 @@
+# Dependabot — weekly dependency + GitHub Actions updates.
+# Minor/patch bumps are grouped into one PR to keep the noise down; major bumps
+# come as individual PRs so breaking changes are reviewed on their own.
+version: 2
+updates:
+  - package-ecosystem: cargo
+    directory: "/"
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 5
+    groups:
+      cargo-minor-patch:
+        update-types: ["minor", "patch"]
+
+  - package-ecosystem: github-actions
+    directory: "/"
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 5
