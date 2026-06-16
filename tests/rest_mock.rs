@@ -811,7 +811,7 @@ async fn place_stop_market_order_returns_order_id() {
     let server = MockServer::start().await;
 
     Mock::given(method("POST"))
-        .and(path("/api/v1/stopOrders"))
+        .and(path("/api/v1/orders"))
         .respond_with(ResponseTemplate::new(200).set_body_json(ok_envelope(
             serde_json::json!({ "orderId": "stop-market-abc" }),
         )))
@@ -841,7 +841,7 @@ async fn place_stop_limit_order_returns_order_id() {
     let server = MockServer::start().await;
 
     Mock::given(method("POST"))
-        .and(path("/api/v1/stopOrders"))
+        .and(path("/api/v1/orders"))
         .respond_with(ResponseTemplate::new(200).set_body_json(ok_envelope(
             serde_json::json!({ "orderId": "stop-limit-xyz" }),
         )))
