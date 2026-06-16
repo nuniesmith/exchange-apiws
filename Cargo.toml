@@ -94,7 +94,7 @@ uuid = { version = "1.23.0", features = ["v4"] }
 zeroize = { version = "1", features = ["derive"] }
 
 # KuCoin HMAC-SHA256 signing
-hmac   = "0.12"
+hmac   = "0.13"
 sha2   = "0.11"
 base64 = "0.22"
 
