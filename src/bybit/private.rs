@@ -329,11 +329,74 @@ impl BybitPrivateClient {
     /// # Errors
     ///
     /// As [`place_order`](Self::place_order).
-    pub async fn get_wallet_balance(&self, account_type: &str) -> Result<Value> {
+    pub async fn get_wallet_balance(&self, account_type: &str) -> Result<Vec<BybitWalletBalance>> {
         let q = format!("accountType={account_type}");
         let resp = self.signed_get("/v5/account/wallet-balance", &q).await?;
-        unwrap_result(resp).await
+        let result: WalletBalanceResult = unwrap_result(resp).await?;
+        Ok(result.list)
     }
+}
+
+/// Account-level wallet balance from `GET /v5/account/wallet-balance`.
+///
+/// Bybit sends every numeric as a JSON string (kept as `String` to preserve
+/// wire precision); `coin` holds the per-asset breakdown.
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct BybitWalletBalance {
+    /// Account type (e.g. `"UNIFIED"`, `"CONTRACT"`).
+    pub account_type: String,
+    /// Total equity, in USD.
+    #[serde(default)]
+    pub total_equity: Option<String>,
+    /// Total wallet balance, in USD.
+    #[serde(default)]
+    pub total_wallet_balance: Option<String>,
+    /// Total balance available for new orders, in USD.
+    #[serde(default)]
+    pub total_available_balance: Option<String>,
+    /// Total margin balance, in USD.
+    #[serde(default)]
+    pub total_margin_balance: Option<String>,
+    /// Unrealised PnL across perpetuals, in USD.
+    #[serde(default)]
+    pub total_perp_upl: Option<String>,
+    /// Per-asset balances.
+    #[serde(default)]
+    pub coin: Vec<BybitCoinBalance>,
+}
+
+/// Per-asset balance inside [`BybitWalletBalance`].
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct BybitCoinBalance {
+    /// Asset code (e.g. `"BTC"`, `"USDT"`).
+    pub coin: String,
+    /// Wallet balance in this asset.
+    #[serde(default)]
+    pub wallet_balance: Option<String>,
+    /// Equity in this asset.
+    #[serde(default)]
+    pub equity: Option<String>,
+    /// USD value of the holding.
+    #[serde(default)]
+    pub usd_value: Option<String>,
+    /// Amount locked (open orders / positions).
+    #[serde(default)]
+    pub locked: Option<String>,
+    /// Unrealised PnL on this asset's positions.
+    #[serde(default)]
+    pub unrealised_pnl: Option<String>,
+    /// Cumulative realised PnL.
+    #[serde(default)]
+    pub cum_realised_pnl: Option<String>,
+}
+
+/// `result` wrapper for `GET /v5/account/wallet-balance` (`{"list": [...]}`).
+#[derive(Debug, Deserialize)]
+struct WalletBalanceResult {
+    #[serde(default)]
+    list: Vec<BybitWalletBalance>,
 }
 
 /// Bybit's standard `{retCode, retMsg, result}` envelope.
@@ -363,6 +426,23 @@ async fn unwrap_result<T: DeserializeOwned>(resp: reqwest::Response) -> Result<T
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn wallet_balance_deserializes_with_coin_breakdown() {
+        let raw = r#"{
+            "accountType": "UNIFIED", "totalEquity": "3.31216591",
+            "totalWalletBalance": "3.00326056", "totalAvailableBalance": "3.00326056",
+            "coin": [{"coin": "BTC", "walletBalance": "0.5", "equity": "0.5",
+                "usdValue": "32000.0", "locked": "0", "unrealisedPnl": "0", "cumRealisedPnl": "0"}]
+        }"#;
+        let bal: BybitWalletBalance =
+            serde_json::from_str(raw).expect("deserialize wallet balance");
+        assert_eq!(bal.account_type, "UNIFIED");
+        assert_eq!(bal.total_equity.as_deref(), Some("3.31216591"));
+        assert_eq!(bal.coin.len(), 1);
+        assert_eq!(bal.coin[0].coin, "BTC");
+        assert_eq!(bal.coin[0].wallet_balance.as_deref(), Some("0.5"));
+    }
 
     #[test]
     fn market_order_serialises_to_bybit_wire_shape() {

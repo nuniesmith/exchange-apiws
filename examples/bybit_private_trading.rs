@@ -37,7 +37,14 @@ async fn main() -> exchange_apiws::Result<()> {
 
     // ── Reads (always safe) ───────────────────────────────────────────────────
     let bal = client.get_wallet_balance("UNIFIED").await?;
-    println!("wallet (UNIFIED): {}", trim(&bal));
+    if let Some(acct) = bal.first() {
+        println!(
+            "wallet ({}): total_equity={} coins={}",
+            acct.account_type,
+            acct.total_equity.as_deref().unwrap_or("?"),
+            acct.coin.len()
+        );
+    }
 
     let positions = client.get_positions(category, Some(symbol)).await?;
     println!("positions {symbol}: {}", trim(&positions));

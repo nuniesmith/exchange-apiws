@@ -389,6 +389,155 @@ impl BybitFundingRate {
     }
 }
 
+/// Instrument metadata from `GET /v5/market/instruments-info`.
+///
+/// Models the **union** of the `linear`/`inverse` and `spot` shapes — the
+/// filter fields differ by product class (spot has `basePrecision` /
+/// `minOrderAmt` where linear has `qtyStep` / `minNotionalValue`), so the
+/// per-class fields are `Option`. Bybit sends every numeric as a JSON string;
+/// they're kept as `String` to preserve wire precision — use the `tick_size` /
+/// `lot_size` / `min_order_qty` / `min_notional` helpers for parsed `f64`
+/// access regardless of category.
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct BybitInstrument {
+    /// Trading-pair symbol (e.g. `"BTCUSDT"`).
+    pub symbol: String,
+    /// `"Trading"`, `"PreLaunch"`, `"Delivering"`, `"Closed"`, …
+    pub status: String,
+    /// Base currency code.
+    #[serde(default)]
+    pub base_coin: Option<String>,
+    /// Quote currency code.
+    #[serde(default)]
+    pub quote_coin: Option<String>,
+    /// Settlement currency (derivatives only).
+    #[serde(default)]
+    pub settle_coin: Option<String>,
+    /// `"LinearPerpetual"`, `"LinearFutures"`, … (derivatives only).
+    #[serde(default)]
+    pub contract_type: Option<String>,
+    /// Price-tick / price-bound filter.
+    #[serde(default)]
+    pub price_filter: Option<BybitPriceFilter>,
+    /// Order-size filter (fields differ by product class).
+    #[serde(default)]
+    pub lot_size_filter: Option<BybitLotSizeFilter>,
+    /// Leverage bounds (derivatives only).
+    #[serde(default)]
+    pub leverage_filter: Option<BybitLeverageFilter>,
+}
+
+impl BybitInstrument {
+    /// Minimum price increment (`priceFilter.tickSize`), parsed.
+    #[must_use]
+    pub fn tick_size(&self) -> Option<f64> {
+        self.price_filter
+            .as_ref()?
+            .tick_size
+            .as_deref()?
+            .parse()
+            .ok()
+    }
+    /// Quantity step / lot size — `lotSizeFilter.qtyStep` (linear) or
+    /// `basePrecision` (spot), parsed.
+    #[must_use]
+    pub fn lot_size(&self) -> Option<f64> {
+        let l = self.lot_size_filter.as_ref()?;
+        l.qty_step
+            .as_deref()
+            .or(l.base_precision.as_deref())?
+            .parse()
+            .ok()
+    }
+    /// Minimum order quantity in base asset (`lotSizeFilter.minOrderQty`).
+    #[must_use]
+    pub fn min_order_qty(&self) -> Option<f64> {
+        self.lot_size_filter
+            .as_ref()?
+            .min_order_qty
+            .as_deref()?
+            .parse()
+            .ok()
+    }
+    /// Minimum notional — `lotSizeFilter.minNotionalValue` (linear) or
+    /// `minOrderAmt` (spot, quote-asset), parsed.
+    #[must_use]
+    pub fn min_notional(&self) -> Option<f64> {
+        let l = self.lot_size_filter.as_ref()?;
+        l.min_notional_value
+            .as_deref()
+            .or(l.min_order_amt.as_deref())?
+            .parse()
+            .ok()
+    }
+}
+
+/// Price filter from [`BybitInstrument`]. `minPrice` / `maxPrice` are
+/// derivatives-only (absent for spot).
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct BybitPriceFilter {
+    /// Minimum price increment.
+    #[serde(default)]
+    pub tick_size: Option<String>,
+    /// Lowest allowed price (derivatives only).
+    #[serde(default)]
+    pub min_price: Option<String>,
+    /// Highest allowed price (derivatives only).
+    #[serde(default)]
+    pub max_price: Option<String>,
+}
+
+/// Order-size filter from [`BybitInstrument`].
+///
+/// The fields populated depend on the product class: linear/inverse use
+/// `qtyStep` / `minNotionalValue`; spot uses `basePrecision` /
+/// `quotePrecision` / `minOrderAmt` / `maxOrderAmt`.
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct BybitLotSizeFilter {
+    /// Minimum order quantity (base asset).
+    #[serde(default)]
+    pub min_order_qty: Option<String>,
+    /// Maximum order quantity (base asset).
+    #[serde(default)]
+    pub max_order_qty: Option<String>,
+    /// Quantity step (derivatives).
+    #[serde(default)]
+    pub qty_step: Option<String>,
+    /// Minimum notional value (derivatives).
+    #[serde(default)]
+    pub min_notional_value: Option<String>,
+    /// Base-asset quantity precision (spot).
+    #[serde(default)]
+    pub base_precision: Option<String>,
+    /// Quote-asset amount precision (spot).
+    #[serde(default)]
+    pub quote_precision: Option<String>,
+    /// Minimum order amount in quote asset (spot — the spot min-notional).
+    #[serde(default)]
+    pub min_order_amt: Option<String>,
+    /// Maximum order amount in quote asset (spot).
+    #[serde(default)]
+    pub max_order_amt: Option<String>,
+}
+
+/// Leverage filter from [`BybitInstrument`] (derivatives only).
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct BybitLeverageFilter {
+    /// Minimum leverage.
+    #[serde(default)]
+    pub min_leverage: Option<String>,
+    /// Maximum leverage.
+    #[serde(default)]
+    pub max_leverage: Option<String>,
+    /// Leverage increment.
+    #[serde(default)]
+    pub leverage_step: Option<String>,
+}
+
 /// Open-interest snapshot returned by `GET /v5/market/open-interest`.
 #[derive(Debug, Clone, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -529,11 +678,15 @@ impl BybitRestClient {
 
     /// `GET /v5/market/instruments-info` — instrument metadata for `category`.
     ///
-    /// Returns raw JSON because the filter shape (lot-size, tick-size, …)
-    /// is per-product-class and easier to deserialize on demand than to
-    /// model statically. Callers run [`serde_json::from_value`] with their
-    /// own shape if they need typed access.
-    pub async fn get_instruments(&self, category: BybitCategory) -> Result<Value> {
+    /// Per-product-class filter differences (spot vs linear/inverse) are folded
+    /// into [`BybitInstrument`]'s optional fields; use its `tick_size` /
+    /// `lot_size` / `min_order_qty` / `min_notional` helpers for
+    /// category-agnostic spec access (tick/lot/min-notional for order rounding
+    /// and validation).
+    pub async fn get_instruments(
+        &self,
+        category: BybitCategory,
+    ) -> Result<BybitListResult<BybitInstrument>> {
         let raw: Value = self
             .http
             .get(
@@ -718,5 +871,28 @@ mod tests {
         assert_eq!(f.exchange, "bybit");
         assert!(f.mark_price.is_none()); // Bybit's funding history doesn't bundle mark
         assert_eq!(f.next_funding_time, 1_700_028_800_000);
+    }
+
+    #[test]
+    fn instrument_spot_specs_use_per_category_fields() {
+        // Spot uses basePrecision / minOrderAmt where linear uses qtyStep /
+        // minNotionalValue, and priceFilter carries only tickSize (no
+        // min/maxPrice). The category-agnostic helpers must resolve both.
+        let raw = r#"{
+            "symbol": "BTCUSDT", "status": "Trading", "baseCoin": "BTC", "quoteCoin": "USDT",
+            "lotSizeFilter": {"basePrecision": "0.000001", "quotePrecision": "0.0000001",
+                "minOrderQty": "0.000011", "maxOrderQty": "83", "minOrderAmt": "5", "maxOrderAmt": "8000000"},
+            "priceFilter": {"tickSize": "0.1"}
+        }"#;
+        let inst: BybitInstrument = serde_json::from_str(raw).expect("deserialize spot instrument");
+        assert_eq!(inst.symbol, "BTCUSDT");
+        assert!((inst.tick_size().unwrap() - 0.1).abs() < 1e-9);
+        // lot_size falls back to basePrecision for spot
+        assert!((inst.lot_size().unwrap() - 0.000_001).abs() < 1e-12);
+        // min_notional falls back to minOrderAmt for spot
+        assert!((inst.min_notional().unwrap() - 5.0).abs() < 1e-9);
+        // spot priceFilter has no min/max price; spot has no leverage filter
+        assert!(inst.price_filter.as_ref().unwrap().min_price.is_none());
+        assert!(inst.leverage_filter.is_none());
     }
 }
