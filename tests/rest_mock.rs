@@ -359,7 +359,7 @@ async fn cancel_order_calls_delete_with_order_id() {
         .await
         .expect("cancel_order failed");
 
-    assert_eq!(resp["cancelledOrderIds"][0], order_id);
+    assert_eq!(resp.cancelled_order_ids[0], order_id);
 }
 
 #[tokio::test]
@@ -380,8 +380,7 @@ async fn cancel_all_orders_calls_delete_returns_id_list() {
         .await
         .expect("cancel_all_orders failed");
 
-    let ids = resp["cancelledOrderIds"].as_array().unwrap();
-    assert_eq!(ids.len(), 2);
+    assert_eq!(resp.cancelled_order_ids.len(), 2);
 }
 
 // ── get_open_orders ───────────────────────────────────────────────────────────
@@ -884,11 +883,8 @@ async fn cancel_stop_order_returns_exchange_response() {
         .await
         .expect("cancel_stop_order failed");
 
-    let ids = resp["cancelledOrderIds"]
-        .as_array()
-        .expect("cancelledOrderIds should be an array");
-    assert_eq!(ids.len(), 1);
-    assert_eq!(ids[0].as_str(), Some("stop-to-cancel"));
+    assert_eq!(resp.cancelled_order_ids.len(), 1);
+    assert_eq!(resp.cancelled_order_ids[0], "stop-to-cancel");
 }
 
 #[tokio::test]
@@ -909,10 +905,7 @@ async fn cancel_all_stop_orders_returns_exchange_response() {
         .await
         .expect("cancel_all_stop_orders failed");
 
-    let ids = resp["cancelledOrderIds"]
-        .as_array()
-        .expect("cancelledOrderIds should be an array");
-    assert_eq!(ids.len(), 2);
+    assert_eq!(resp.cancelled_order_ids.len(), 2);
 }
 
 #[tokio::test]
@@ -934,10 +927,7 @@ async fn cancel_all_stop_orders_no_open_stops_returns_empty() {
         .await
         .expect("cancel_all_stop_orders failed");
 
-    let ids = resp["cancelledOrderIds"]
-        .as_array()
-        .expect("cancelledOrderIds should be an array");
-    assert!(ids.is_empty());
+    assert!(resp.cancelled_order_ids.is_empty());
 }
 
 // ── get_done_orders ───────────────────────────────────────────────────────────

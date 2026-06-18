@@ -12,7 +12,7 @@
 //! | `get_orderbook_returns_levels` | `GET /v5/market/orderbook` |
 //! | `get_tickers_returns_list` | `GET /v5/market/tickers` |
 //! | `get_recent_trades_returns_list` | `GET /v5/market/recent-trade` |
-//! | `get_instruments_returns_raw_json` | `GET /v5/market/instruments-info` |
+//! | `get_instruments_returns_typed_specs` | `GET /v5/market/instruments-info` |
 //! | `get_funding_rate_returns_history` | `GET /v5/market/funding/history` |
 //! | `get_open_interest_returns_series` | `GET /v5/market/open-interest` |
 //! | `get_long_short_ratio_returns_series` | `GET /v5/market/account-ratio` |
@@ -193,27 +193,45 @@ async fn get_recent_trades_returns_list() {
 }
 
 #[tokio::test]
-async fn get_instruments_returns_raw_json() {
+async fn get_instruments_returns_typed_specs() {
     let server = MockServer::start().await;
     Mock::given(method("GET"))
         .and(path("/v5/market/instruments-info"))
         .and(query_param("category", "linear"))
+        // A realistic linear instrument — Bybit sends every numeric as a string.
         .respond_with(
             ResponseTemplate::new(200).set_body_json(ok_envelope(serde_json::json!({
                 "category": "linear",
-                "list": [{"symbol": "BTCUSDT", "status": "Trading"}]
+                "list": [{
+                    "symbol": "BTCUSDT",
+                    "contractType": "LinearPerpetual",
+                    "status": "Trading",
+                    "baseCoin": "BTC",
+                    "quoteCoin": "USDT",
+                    "settleCoin": "USDT",
+                    "priceFilter": {"minPrice": "0.10", "maxPrice": "1999999.80", "tickSize": "0.10"},
+                    "lotSizeFilter": {"maxOrderQty": "1190.000", "minOrderQty": "0.001", "qtyStep": "0.001", "minNotionalValue": "5"},
+                    "leverageFilter": {"minLeverage": "1", "maxLeverage": "100.00", "leverageStep": "0.01"}
+                }]
             }))),
         )
         .expect(1)
         .mount(&server)
         .await;
 
-    let v = client_for(&server)
+    let result = client_for(&server)
         .get_instruments(BybitCategory::Linear)
         .await
         .expect("instruments");
-    assert_eq!(v["category"], "linear");
-    assert_eq!(v["list"][0]["symbol"], "BTCUSDT");
+    assert_eq!(result.category, "linear");
+    let inst = &result.list[0];
+    assert_eq!(inst.symbol, "BTCUSDT");
+    assert_eq!(inst.status, "Trading");
+    // The category-agnostic spec accessors (the A2 use case).
+    assert!((inst.tick_size().unwrap() - 0.10).abs() < 1e-9);
+    assert!((inst.lot_size().unwrap() - 0.001).abs() < 1e-9);
+    assert!((inst.min_order_qty().unwrap() - 0.001).abs() < 1e-9);
+    assert!((inst.min_notional().unwrap() - 5.0).abs() < 1e-9);
 }
 
 #[tokio::test]
