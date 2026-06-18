@@ -4,7 +4,7 @@
 > see the [Done](#done--original-roadmap-complete) summary at the bottom and
 > `CHANGELOG.md` for the per-version detail.
 
-## Where things stand (2026-06, **v0.5.0 — published on crates.io**)
+## Where things stand (2026-06-18, **v0.8.1 — published on crates.io**; `main` ahead → cut **0.9.0** next)
 
 Seven venues. Shared async runner with supervised token refresh,
 connect/idle timeouts, cascade-start WARN, and a `RunnerEvent`
@@ -33,6 +33,17 @@ Per-exchange Cargo features. Runnable examples. README + CHANGELOG current.
   a private WS is now account-aware for janus's Bybit-compat path. Plus the
   breaking `OrderUpdate`/`AdvancedOrderUpdate` quantity widening to `f64` (no
   more fractional-size truncation).
+- **0.7.0** — breaking `PositionChange/PositionInfo.current_qty` widened `i32 →
+  f64` (fractional position sizes, matching 0.6.0's quantity widening).
+- **0.8.0** — `LocalOrderBook` (snapshot+delta assembly with gap detection) +
+  sequence IDs on `OrderBookData`; private REST clients (Bybit/Kraken/Crypto.com)
+  now back off on HTTP 429 with per-attempt re-signing; `WsOrderClient::close()`
+  teardown fix + bounded outbound queue; docs.rs `all-features` metadata.
+- **0.8.1** — reqwest shipped with no TLS backend → fixed (#50).
+- **Unreleased on `main` (→ 0.9.0):** typed `binance get_exchange_info` (#51) and
+  all 10 `cryptocom/private.rs` methods (#61, breaking); main CI restore — hmac
+  0.13 `KeyInit` + msrv toolchain pin (#59); Dependabot + `cargo-deny` (#53).
+  The cryptocom break makes the next release **0.9.0**.
 
 **Remaining gaps the matrix shows:** Binance still has no signed account/order
 REST; Coinbase/OKX are WS-only (no REST/private); only KuCoin places orders over
@@ -43,9 +54,9 @@ roadmap (Sections B/C/H below).
 
 ## Recommended next steps (priority order)
 
-> ✅ **Published.** The crate is live on crates.io (0.5.0). `release.sh` is
-> publish-safe and used. The priority list below now leads with functional
-> surface, not the publish.
+> ✅ **Published.** The crate is live on crates.io (**0.8.1**); `main` has
+> unreleased work (→ cut **0.9.0**, breaking). `release.sh` is publish-safe and
+> used. The priority list below now leads with functional surface, not the publish.
 
 1. ~~**Other venues' private WS user-data streams.**~~ **Done** — Bybit (C3),
    Binance (C2), Crypto.com (C4), and Kraken (C1) all stream order/fill +
@@ -60,27 +71,29 @@ roadmap (Sections B/C/H below).
    string; Bybit v5 = HMAC-SHA256 over `timestamp+key+recv_window+body`
    in headers. → [B1](#b-private-trading-surface), [B2](#b-private-trading-surface)
 
-3. **Private WebSocket user-data streams** for the four venues missing
-   them. This is what makes a feed *trade-aware* (your own fills,
-   positions, balances) instead of just market data. → [C](#c-private-websocket--ws-order-entry)
+3. ~~**Private WebSocket user-data streams** for the four venues missing them.~~
+   **Done in 0.6.0** (same as item 1 above — Bybit/Binance/Crypto.com/Kraken all
+   stream fills/positions/balances). Kept only as a pointer. → [C](#c-private-websocket--ws-order-entry)
 
 4. **Local order-book maintainer.** Connectors already emit depth
    snapshots + deltas, but there's no helper to assemble a synchronized
    book with sequence-gap detection and snapshot resync. Without it the
    depth streams aren't directly usable. → [D1](#d-market-data-quality)
 
-5. **CI supply-chain + semver gates** (`cargo-deny`, `cargo-audit`,
-   `cargo-semver-checks`, coverage). Cheap to add, protects every
-   release from here on. → [F](#f-quality-ci--supply-chain)
+5. **CI supply-chain + semver gates.** `cargo-deny` + Dependabot **shipped**
+   (#53); still to add: `cargo-semver-checks` (catch accidental breaks before a
+   publish — relevant now that 0.9.0 is breaking) + coverage. → [F](#f-quality-ci--supply-chain)
 
 ---
 
 ## A. Publishing & release
 
-- [ ] **A1 — Publish 0.3.x to crates.io.** Run `./scripts/release.sh`
-      (gates: clean tree, no existing tag, CHANGELOG section, build,
-      test, `cargo package`). Requires `CARGO_REGISTRY_TOKEN` /
-      `cargo login`. _Blocked on your token — I can prep + dry-run it._
+- [ ] **A1 — Publish the next release (0.9.0) to crates.io.** 0.3.x–0.8.1 are
+      published; `main` now carries unreleased binance + cryptocom typing (#51/#61,
+      breaking) + the CI restore (#59) → cut **0.9.0**. Run `./scripts/release.sh`
+      (gates: clean tree, no existing tag, CHANGELOG section, build, test,
+      `cargo package`). Requires `CARGO_REGISTRY_TOKEN` / `cargo login`.
+      _Blocked on your token — I can prep + dry-run it._
 - [ ] **A2 — `package.metadata.docs.rs`** in `Cargo.toml` so docs.rs
       builds with `--all-features` (otherwise the optional exchanges are
       missing from the published docs). Add
