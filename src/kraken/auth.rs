@@ -13,7 +13,7 @@
 //! [`form_encode`] for the form-body builder.
 
 use base64::{Engine, engine::general_purpose::STANDARD};
-use hmac::{Hmac, Mac};
+use hmac::{Hmac, KeyInit, Mac};
 use sha2::{Digest, Sha256, Sha512};
 use zeroize::ZeroizeOnDrop;
 

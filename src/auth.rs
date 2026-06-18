@@ -10,7 +10,7 @@
 //! ```
 
 use base64::{Engine as _, engine::general_purpose::STANDARD as B64};
-use hmac::{Hmac, Mac};
+use hmac::{Hmac, KeyInit, Mac};
 use reqwest::header::{CONTENT_TYPE, HeaderMap, HeaderValue};
 use sha2::Sha256;
 

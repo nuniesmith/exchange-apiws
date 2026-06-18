@@ -17,3 +17,10 @@ updates:
     schedule:
       interval: weekly
     open-pull-requests-limit: 5
+    ignore:
+      # dtolnay/rust-toolchain's ref is a *Rust toolchain version*, not the
+      # action's own version. The msrv job pins it to the crate's declared
+      # `rust-version` on purpose; auto-bumping it (#54 → 1.100.0) both breaks
+      # the job (no such toolchain) and defeats the MSRV check. Pin is managed
+      # by hand. The other jobs use `@stable`, which is unaffected.
+      - dependency-name: "dtolnay/rust-toolchain"
