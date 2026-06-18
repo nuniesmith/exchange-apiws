@@ -477,6 +477,12 @@ impl CryptocomPrivateClient {
         crate::tls::ensure_crypto_provider();
         let http = Client::builder()
             .timeout(Duration::from_secs(DEFAULT_HTTP_TIMEOUT_SECS))
+            // Force IPv4. Crypto.com checks API-key IP whitelists against the
+            // *connecting* address; on a dual-stack host the client otherwise
+            // prefers IPv6 and presents an un-whitelisted v6 address (→ 401
+            // auth failure). Binding an IPv4 source pins the stable v4 egress
+            // the whitelist is set for, so only one (v4) IP needs whitelisting.
+            .local_address(std::net::IpAddr::V4(std::net::Ipv4Addr::UNSPECIFIED))
             .build()
             .map_err(|e| ExchangeError::Config(format!("failed to build HTTP client: {e}")))?;
         Ok(Self {
@@ -585,6 +591,15 @@ impl CryptocomPrivateClient {
             .post("private/get-account-summary", Value::Object(params))
             .await?;
         Ok(summary.accounts)
+    }
+
+    /// `POST /private/user-balance` — current account balances on the **v1**
+    /// Exchange API (the modern replacement for the deprecated
+    /// `get-account-summary`, which `ERR_INTERNAL`s under `/exchange/v1`).
+    /// Takes no params; returns the `result` object whose `data[0]` carries a
+    /// `position_balances[]` array of `{instrument_name, quantity, ...}`.
+    pub async fn get_user_balance(&self) -> Result<Value> {
+        self.post("private/user-balance", json!({})).await
     }
 
     /// `POST /private/create-order` — place a new order.
