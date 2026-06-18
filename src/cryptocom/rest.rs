@@ -355,14 +355,14 @@ impl CryptocomRestClient {
         Ok(list.data)
     }
 
-    /// `GET /public/get-ticker` — 24-hour rolling ticker for one or all
+    /// `GET /public/get-tickers` — 24-hour rolling ticker for one or all
     /// instruments. Pass `None` to fetch every instrument.
     pub async fn get_ticker(&self, instrument: Option<&str>) -> Result<Vec<CryptocomTicker>> {
         let mut params: Vec<(&str, &str)> = Vec::new();
         if let Some(i) = instrument {
             params.push(("instrument_name", i));
         }
-        let raw: Value = self.http.get("/public/get-ticker", &params).await?;
+        let raw: Value = self.http.get("/public/get-tickers", &params).await?;
         let list: DataList<CryptocomTicker> = unwrap_cryptocom_envelope(raw)?;
         Ok(list.data)
     }
