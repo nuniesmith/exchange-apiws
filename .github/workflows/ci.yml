@@ -92,7 +92,11 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6
-      - uses: dtolnay/rust-toolchain@1.100.0
+      # MUST match the crate's declared `rust-version` in Cargo.toml — this job
+      # exists to prove the crate still builds on its MSRV. Do NOT bump to
+      # "latest"; that defeats the check. Dependabot is told to ignore this
+      # action (see .github/dependabot.yml) so it can't auto-bump the pin.
+      - uses: dtolnay/rust-toolchain@1.94.1
       - uses: Swatinem/rust-cache@v2
       # Verify the crate still builds on the declared rust-version.
       - run: cargo check --all-features --all-targets
