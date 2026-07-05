@@ -11,7 +11,7 @@
 //! The signing is byte-for-byte compatible with Bybit's v5 spec; see
 //! <https://bybit-exchange.github.io/docs/v5/guide#authentication>.
 
-use hmac::{Hmac, Mac};
+use hmac::{Hmac, KeyInit, Mac};
 use sha2::Sha256;
 use zeroize::ZeroizeOnDrop;
 

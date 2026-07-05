@@ -18,17 +18,30 @@ jobs:
     name: rustfmt
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - uses: dtolnay/rust-toolchain@stable
         with:
           components: rustfmt
       - run: cargo fmt --all --check
 
+  deny:
+    name: cargo deny (advisories / licenses / bans / sources)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo install cargo-deny --locked
+      # Supply-chain check (config: deny.toml). Non-blocking for now; drop
+      # continue-on-error to gate once the graph stays clean.
+      - run: cargo deny check
+        continue-on-error: true
+
   clippy:
     name: clippy
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - uses: dtolnay/rust-toolchain@stable
         with:
           components: clippy
@@ -55,7 +68,7 @@ jobs:
           - label: no-default-features
             flags: "--no-default-features"
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
       # Tests are fully offline (wiremock + local tokio-tungstenite servers),
@@ -66,7 +79,7 @@ jobs:
     name: doc
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
       # Deny rustdoc warnings so broken intra-doc links can't reach docs.rs.
@@ -78,7 +91,11 @@ jobs:
     name: msrv (1.94.1)
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
+      # MUST match the crate's declared `rust-version` in Cargo.toml — this job
+      # exists to prove the crate still builds on its MSRV. Do NOT bump to
+      # "latest"; that defeats the check. Dependabot is told to ignore this
+      # action (see .github/dependabot.yml) so it can't auto-bump the pin.
       - uses: dtolnay/rust-toolchain@1.94.1
       - uses: Swatinem/rust-cache@v2
       # Verify the crate still builds on the declared rust-version.

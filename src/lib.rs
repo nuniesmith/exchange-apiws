@@ -143,11 +143,11 @@ pub use cryptocom::{
 };
 pub use error::{ExchangeError, Result};
 pub use http::PublicRestClient;
-pub use tls::ensure_crypto_provider;
 #[cfg(feature = "kraken")]
 pub use kraken::{KrakenConnector, KrakenCredentials, KrakenPrivateClient, KrakenRestClient};
 #[cfg(feature = "okx")]
 pub use okx::{OkxChannel, OkxConnector};
+pub use tls::ensure_crypto_provider;
 pub use types::{Candle, OrderType, STP, Side, TimeInForce};
 
 // ── WS convenience re-exports ─────────────────────────────────────────────────

@@ -14,12 +14,13 @@ pub mod ws;
 
 pub use auth::{BybitCredentials, DEFAULT_RECV_WINDOW};
 pub use private::{
-    BybitOrderAck, BybitOrderRequest, BybitOrderSide, BybitOrderType, BybitPrivateClient,
-    BybitTimeInForce,
+    BybitCoinBalance, BybitOrderAck, BybitOrderRequest, BybitOrderSide, BybitOrderType,
+    BybitPrivateClient, BybitTimeInForce, BybitWalletBalance,
 };
 pub use private_ws::BybitPrivateConnector;
 pub use rest::{
-    BybitCategory, BybitFundingRate, BybitKline, BybitListResult, BybitLongShortRatio,
-    BybitOpenInterest, BybitOrderBook, BybitRestClient, BybitTicker, BybitTrade,
+    BybitCategory, BybitFundingRate, BybitInstrument, BybitKline, BybitLeverageFilter,
+    BybitListResult, BybitLongShortRatio, BybitLotSizeFilter, BybitOpenInterest, BybitOrderBook,
+    BybitPriceFilter, BybitRestClient, BybitTicker, BybitTrade,
 };
 pub use ws::BybitConnector;

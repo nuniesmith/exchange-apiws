@@ -35,6 +35,18 @@ pub struct OrderResponse {
     pub order_id: String,
 }
 
+/// IDs of the orders a cancel endpoint actually cancelled.
+///
+/// A single-order cancel returns the one ID; the bulk cancels (`?symbol=`)
+/// return every affected order's ID (empty when nothing matched).
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CancelledOrders {
+    /// IDs of the cancelled orders.
+    #[serde(default)]
+    pub cancelled_order_ids: Vec<String>,
+}
+
 /// Full order detail returned by GET /api/v1/orders/{orderId}.
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -251,13 +263,13 @@ impl KuCoinClient {
     }
 
     /// Cancel a specific order by its KuCoin order ID.
-    pub async fn cancel_order(&self, order_id: &str) -> Result<serde_json::Value> {
+    pub async fn cancel_order(&self, order_id: &str) -> Result<CancelledOrders> {
         info!(order_id, "cancelling order");
         self.delete(&format!("/api/v1/orders/{order_id}")).await
     }
 
     /// Cancel all open orders for a symbol.
-    pub async fn cancel_all_orders(&self, symbol: &str) -> Result<serde_json::Value> {
+    pub async fn cancel_all_orders(&self, symbol: &str) -> Result<CancelledOrders> {
         info!(symbol, "cancelling all open orders");
         self.delete(&format!("/api/v1/orders?symbol={symbol}"))
             .await
@@ -342,7 +354,7 @@ impl KuCoinClient {
     /// Cancel a stop order by its order ID.
     ///
     /// Endpoint: `DELETE /api/v1/stopOrders/{orderId}`
-    pub async fn cancel_stop_order(&self, order_id: &str) -> Result<serde_json::Value> {
+    pub async fn cancel_stop_order(&self, order_id: &str) -> Result<CancelledOrders> {
         info!(order_id, "cancelling stop order");
         self.delete(&format!("/api/v1/stopOrders/{order_id}")).await
     }
@@ -350,7 +362,7 @@ impl KuCoinClient {
     /// Cancel all stop orders for a symbol.
     ///
     /// Endpoint: `DELETE /api/v1/stopOrders?symbol={symbol}`
-    pub async fn cancel_all_stop_orders(&self, symbol: &str) -> Result<serde_json::Value> {
+    pub async fn cancel_all_stop_orders(&self, symbol: &str) -> Result<CancelledOrders> {
         info!(symbol, "cancelling all stop orders");
         self.delete(&format!("/api/v1/stopOrders?symbol={symbol}"))
             .await

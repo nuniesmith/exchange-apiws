@@ -228,15 +228,27 @@ async fn get_ticker_24h_returns_window_stats() {
 }
 
 #[tokio::test]
-async fn get_exchange_info_returns_raw_json() {
+async fn get_exchange_info_parses_symbol_filters() {
     let server = MockServer::start().await;
     Mock::given(method("GET"))
         .and(path("/api/v3/exchangeInfo"))
         .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
             "timezone": "UTC",
             "serverTime": 1_700_000_000_000_u64,
-            "rateLimits": [],
-            "symbols": []
+            "symbols": [{
+                "symbol": "BTCUSDT",
+                "status": "TRADING",
+                "baseAsset": "BTC",
+                "baseAssetPrecision": 8,
+                "quoteAsset": "USDT",
+                "quoteAssetPrecision": 8,
+                "filters": [
+                    { "filterType": "PRICE_FILTER", "minPrice": "0.01", "maxPrice": "1000000.00", "tickSize": "0.01" },
+                    { "filterType": "LOT_SIZE", "minQty": "0.00001", "maxQty": "9000.0", "stepSize": "0.00001" },
+                    { "filterType": "NOTIONAL", "minNotional": "5.0" },
+                    { "filterType": "PERCENT_PRICE", "multiplierUp": "5" }
+                ]
+            }]
         })))
         .expect(1)
         .mount(&server)
@@ -246,8 +258,14 @@ async fn get_exchange_info_returns_raw_json() {
         .get_exchange_info()
         .await
         .expect("expected successful exchangeInfo fetch");
-    assert_eq!(info["timezone"], "UTC");
-    assert_eq!(info["serverTime"], 1_700_000_000_000_u64);
+    let sym = info.symbol("BTCUSDT").expect("BTCUSDT listed");
+    assert_eq!(sym.base_asset, "BTC");
+    assert_eq!(sym.quote_asset_precision, 8);
+    assert_eq!(sym.tick_size(), Some(0.01));
+    assert_eq!(sym.lot_size(), Some(0.00001));
+    assert_eq!(sym.min_notional(), Some(5.0));
+    // unknown filter (PERCENT_PRICE) must not break parsing
+    assert_eq!(sym.filters.len(), 4);
 }
 
 // ── Futures (USDT-M) ──────────────────────────────────────────────────────────

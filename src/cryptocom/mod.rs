@@ -16,7 +16,10 @@ pub mod rest;
 pub mod ws;
 
 pub use auth::{CryptocomCredentials, build_params_string, sign_cryptocom_request};
-pub use private::CryptocomPrivateClient;
+pub use private::{
+    CryptocomBalance, CryptocomDepositAddress, CryptocomOrder, CryptocomOrderAck,
+    CryptocomPrivateClient, CryptocomPrivateTrade, CryptocomWithdrawal, CryptocomWithdrawalAck,
+};
 pub use private_ws::CryptocomUserConnector;
 pub use rest::{
     CryptocomCandle, CryptocomInstrument, CryptocomOrderBook, CryptocomRestClient, CryptocomTicker,
