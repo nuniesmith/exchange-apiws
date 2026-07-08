@@ -602,15 +602,6 @@ impl CryptocomPrivateClient {
         self.post("private/user-balance", json!({})).await
     }
 
-    /// `POST /private/user-balance` — current account balances on the **v1**
-    /// Exchange API (the modern replacement for the deprecated
-    /// `get-account-summary`, which `ERR_INTERNAL`s under `/exchange/v1`).
-    /// Takes no params; returns the `result` object whose `data[0]` carries a
-    /// `position_balances[]` array of `{instrument_name, quantity, ...}`.
-    pub async fn get_user_balance(&self) -> Result<Value> {
-        self.post("private/user-balance", json!({})).await
-    }
-
     /// `POST /private/create-order` — place a new order.
     #[allow(clippy::too_many_arguments, clippy::similar_names)]
     pub async fn place_order(

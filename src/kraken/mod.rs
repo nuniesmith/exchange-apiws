@@ -21,7 +21,8 @@ pub use private::{
     KrakenWsToken,
 };
 pub use rest::{
-    KrakenAsset, KrakenAssetPair, KrakenOrderBook, KrakenRestClient, KrakenSystemStatus,
-    KrakenTicker, unwrap_kraken_envelope,
+    KrakenAsset, KrakenAssetPair, KrakenCandle, KrakenOhlc, KrakenOrderBook, KrakenRecentTrades,
+    KrakenRestClient, KrakenSpread, KrakenSpreadTick, KrakenSystemStatus, KrakenTicker,
+    KrakenTrade, unwrap_kraken_envelope,
 };
 pub use ws::KrakenConnector;

@@ -11,9 +11,9 @@
 //! | `get_asset_pairs_unfiltered_returns_all_pairs` | `/0/public/AssetPairs` |
 //! | `get_ticker_returns_keyed_entry` | `/0/public/Ticker` |
 //! | `get_orderbook_returns_levels` | `/0/public/Depth` |
-//! | `get_ohlc_returns_raw_value` | `/0/public/OHLC` (raw Value) |
-//! | `get_recent_trades_returns_raw_value` | `/0/public/Trades` (raw Value) |
-//! | `get_spread_returns_raw_value` | `/0/public/Spread` (raw Value) |
+//! | `get_ohlc_returns_typed_candles` | `/0/public/OHLC` (typed `KrakenOhlc`) |
+//! | `get_recent_trades_returns_typed_trades` | `/0/public/Trades` (typed `KrakenRecentTrades`) |
+//! | `get_spread_returns_typed_ticks` | `/0/public/Spread` (typed `KrakenSpread`) |
 //! | `error_envelope_surfaces_as_api_error` | non-empty error array propagation |
 //!
 //! Run with:
@@ -206,7 +206,7 @@ async fn get_orderbook_returns_levels() {
 }
 
 #[tokio::test]
-async fn get_ohlc_returns_raw_value() {
+async fn get_ohlc_returns_typed_candles() {
     let server = MockServer::start().await;
     Mock::given(method("GET"))
         .and(path("/0/public/OHLC"))
@@ -222,16 +222,21 @@ async fn get_ohlc_returns_raw_value() {
         .mount(&server)
         .await;
 
-    let v = client_for(&server)
+    let ohlc = client_for(&server)
         .get_ohlc("XBTUSD", 1)
         .await
         .expect("ohlc");
-    assert_eq!(v["last"], 1_700_000_060_u64);
-    assert_eq!(v["XXBTZUSD"][0][1], "96000.0");
+    assert_eq!(ohlc.pair, "XXBTZUSD");
+    assert_eq!(ohlc.last, 1_700_000_060);
+    assert_eq!(ohlc.candles.len(), 1);
+    assert_eq!(ohlc.candles[0].time, 1_700_000_000);
+    assert_eq!(ohlc.candles[0].count, 100);
+    assert!((ohlc.candles[0].open_f64() - 96_000.0).abs() < 1e-9);
+    assert!((ohlc.candles[0].close_f64() - 96_050.0).abs() < 1e-9);
 }
 
 #[tokio::test]
-async fn get_recent_trades_returns_raw_value() {
+async fn get_recent_trades_returns_typed_trades() {
     let server = MockServer::start().await;
     Mock::given(method("GET"))
         .and(path("/0/public/Trades"))
@@ -239,7 +244,8 @@ async fn get_recent_trades_returns_raw_value() {
         .respond_with(
             ResponseTemplate::new(200).set_body_json(ok_envelope(serde_json::json!({
                 "XXBTZUSD": [
-                    ["96000.0","0.001",1_700_000_000.123_f64,"b","l",""]
+                    ["96000.0","0.001",1_700_000_000.123_f64,"b","l",""],
+                    ["96010.5","0.250",1_700_000_001.987_f64,"s","m","",987_654_u64]
                 ],
                 "last": "1700000060123456789"
             }))),
@@ -248,16 +254,24 @@ async fn get_recent_trades_returns_raw_value() {
         .mount(&server)
         .await;
 
-    let v = client_for(&server)
+    let trades = client_for(&server)
         .get_recent_trades("XBTUSD")
         .await
         .expect("trades");
-    assert_eq!(v["XXBTZUSD"][0][0], "96000.0");
-    assert_eq!(v["last"], "1700000060123456789");
+    assert_eq!(trades.pair, "XXBTZUSD");
+    assert_eq!(trades.last, "1700000060123456789");
+    assert_eq!(trades.trades.len(), 2);
+    // legacy 6-element row: no trade_id, buy side
+    assert!(trades.trades[0].is_buy());
+    assert!(trades.trades[0].trade_id.is_none());
+    assert!((trades.trades[0].price_f64() - 96_000.0).abs() < 1e-9);
+    // newer 7-element row: trade_id present, sell side
+    assert!(!trades.trades[1].is_buy());
+    assert_eq!(trades.trades[1].trade_id, Some(987_654));
 }
 
 #[tokio::test]
-async fn get_spread_returns_raw_value() {
+async fn get_spread_returns_typed_ticks() {
     let server = MockServer::start().await;
     Mock::given(method("GET"))
         .and(path("/0/public/Spread"))
@@ -272,12 +286,16 @@ async fn get_spread_returns_raw_value() {
         .mount(&server)
         .await;
 
-    let v = client_for(&server)
+    let spread = client_for(&server)
         .get_spread("XBTUSD")
         .await
         .expect("spread");
-    assert_eq!(v["XXBTZUSD"][0][1], "95999.0");
-    assert_eq!(v["XXBTZUSD"][0][2], "96001.0");
+    assert_eq!(spread.pair, "XXBTZUSD");
+    assert_eq!(spread.last, 1_700_000_060);
+    assert_eq!(spread.spreads.len(), 1);
+    assert_eq!(spread.spreads[0].time, 1_700_000_000);
+    assert!((spread.spreads[0].bid_f64() - 95_999.0).abs() < 1e-9);
+    assert!((spread.spreads[0].ask_f64() - 96_001.0).abs() < 1e-9);
 }
 
 #[tokio::test]
