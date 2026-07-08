@@ -28,21 +28,26 @@ async fn main() -> exchange_apiws::Result<()> {
         );
     }
 
-    // 5 most recent 1-minute OHLC bars — `get_ohlc` returns raw
-    // serde_json::Value because the response shape mixes per-pair
-    // arrays with a top-level "last" cursor.
+    // 5 most recent 1-minute OHLC bars. `get_ohlc` now returns a typed
+    // `KrakenOhlc` — the echoed pair name, the candle `Vec`, and a `last`
+    // cursor split out of Kraken's mixed pair-array + "last" shape.
     let ohlc = client.get_ohlc("XBTUSD", 1).await?;
-    if let Some(arr) = ohlc.get("XXBTZUSD").and_then(|v| v.as_array()) {
-        println!("Last {} 1m OHLC bars:", arr.len().min(5));
-        for bar in arr.iter().rev().take(5).rev() {
-            // [time, open, high, low, close, vwap, volume, count]
-            let close = bar.get(4).and_then(|v| v.as_str()).unwrap_or("?");
-            let vol = bar.get(6).and_then(|v| v.as_str()).unwrap_or("?");
-            let ts = bar.get(0).and_then(serde_json::Value::as_i64).unwrap_or(0);
-            let ts_fmt = chrono::DateTime::from_timestamp(ts, 0)
-                .map_or_else(|| ts.to_string(), |d| d.format("%H:%M:%S").to_string());
-            println!("  {ts_fmt}  close={close}  vol={vol}");
-        }
+    println!(
+        "Last {} 1m OHLC bars for {} (next `since` = {}):",
+        ohlc.candles.len().min(5),
+        ohlc.pair,
+        ohlc.last,
+    );
+    for bar in ohlc.candles.iter().rev().take(5).rev() {
+        let ts_fmt = chrono::DateTime::from_timestamp(bar.time, 0).map_or_else(
+            || bar.time.to_string(),
+            |d| d.format("%H:%M:%S").to_string(),
+        );
+        println!(
+            "  {ts_fmt}  close={:.2}  vol={:.4}",
+            bar.close_f64(),
+            bar.volume_f64(),
+        );
     }
 
     Ok(())

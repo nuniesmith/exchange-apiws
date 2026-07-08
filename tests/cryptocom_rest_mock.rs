@@ -8,8 +8,8 @@
 //! | `get_instruments_returns_list` | `/public/get-instruments` |
 //! | `get_orderbook_unwraps_single_book` | `/public/get-book` |
 //! | `get_candlestick_returns_list` | `/public/get-candlestick` |
-//! | `get_ticker_with_instrument_returns_one` | `/public/get-ticker?instrument_name=...` |
-//! | `get_ticker_unfiltered_returns_all` | `/public/get-ticker` (no params) |
+//! | `get_ticker_with_instrument_returns_one` | `/public/get-tickers?instrument_name=...` |
+//! | `get_ticker_unfiltered_returns_all` | `/public/get-tickers` (no params) |
 //! | `get_recent_trades_returns_list` | `/public/get-trades` |
 //! | `get_valuations_returns_time_series` | `/public/get-valuations` |
 //! | `error_envelope_surfaces_as_api_error` | non-zero `code` propagation |
@@ -147,7 +147,7 @@ async fn get_candlestick_returns_list() {
 async fn get_ticker_with_instrument_returns_one() {
     let server = MockServer::start().await;
     Mock::given(method("GET"))
-        .and(path("/public/get-ticker"))
+        .and(path("/public/get-tickers"))
         .and(query_param("instrument_name", "BTC_USDT"))
         .respond_with(
             ResponseTemplate::new(200).set_body_json(ok_envelope(serde_json::json!({
@@ -176,7 +176,7 @@ async fn get_ticker_with_instrument_returns_one() {
 async fn get_ticker_unfiltered_returns_all() {
     let server = MockServer::start().await;
     Mock::given(method("GET"))
-        .and(path("/public/get-ticker"))
+        .and(path("/public/get-tickers"))
         .respond_with(
             ResponseTemplate::new(200).set_body_json(ok_envelope(serde_json::json!({
                 "data": [
