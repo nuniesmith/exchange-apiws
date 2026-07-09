@@ -132,22 +132,22 @@ in.
 
 ```toml
 [dependencies]
-exchange-apiws = "0.2"
+exchange-apiws = "0.9"
 tokio = { version = "1", features = ["rt-multi-thread", "macros"] }
 ```
 
 ### Per-exchange Cargo features
 
-The four non-KuCoin exchanges are opt-out via Cargo features
-(`binance`, `bybit`, `kraken`, `cryptocom` — all in `default`). Trim
-the dependency footprint by disabling unused exchanges:
+The non-KuCoin exchanges are opt-out via Cargo features
+(`binance`, `bybit`, `kraken`, `cryptocom`, `coinbase`, `okx` — all in
+`default`). Trim the dependency footprint by disabling unused exchanges:
 
 ```toml
 # KuCoin-only
-exchange-apiws = { version = "0.2", default-features = false }
+exchange-apiws = { version = "0.9", default-features = false }
 
 # KuCoin + Binance
-exchange-apiws = { version = "0.2", default-features = false, features = ["binance"] }
+exchange-apiws = { version = "0.9", default-features = false, features = ["binance"] }
 ```
 
 KuCoin and the shared runtime (`actors`, `client`, `auth`, `http`,
