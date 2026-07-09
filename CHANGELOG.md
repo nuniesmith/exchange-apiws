@@ -8,6 +8,12 @@ and the project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.
 
 ## [0.9.0] - 2026-07-08
 
+### Added
+
+- Kraken `AssetPair` now exposes `ordermin`/`costmin`/`cost_decimals` (min order
+  volume/cost), with `ordermin_f64()` / `costmin_f64()` accessors. Optional so
+  pairs lacking them still deserialize.
+
 ### Changed
 
 - **BREAKING: Kraken `get_ohlc` / `get_recent_trades` / `get_spread` now return
