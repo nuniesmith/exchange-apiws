@@ -6,6 +6,30 @@ and the project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.
 
 ## [Unreleased]
 
+## [0.9.0] - 2026-07-08
+
+### Changed
+
+- **BREAKING: Kraken `get_ohlc` / `get_recent_trades` / `get_spread` now return
+  typed structs instead of `Result<serde_json::Value>`** (#66). `get_ohlc` →
+  `KrakenOhlc { pair, candles: Vec<KrakenCandle>, last: i64 }`, where
+  `KrakenCandle` decodes Kraken's 8-element positional row
+  `[time, open, high, low, close, vwap, volume, count]` into named fields
+  (prices / volume kept as wire-precision strings with `*_f64()` accessors).
+  `get_recent_trades` → `KrakenRecentTrades { pair, trades: Vec<KrakenTrade>,
+  last: String }`, whose `KrakenTrade` tolerates both the legacy 6-element and
+  the newer 7-element (`trade_id`) row and ignores trailing fields for forward
+  compatibility. `get_spread` → `KrakenSpread { pair, spreads:
+  Vec<KrakenSpreadTick>, last: i64 }`. All three previously returned raw JSON;
+  callers matching on `serde_json::Value` must move to the typed structs (all
+  re-exported from `kraken`).
+
+### Fixed
+
+- **Removed a byte-identical duplicate `get_user_balance` definition in
+  `cryptocom/private.rs`** left by a bad merge — the redefinition broke
+  compilation of the Crypto.com signed surface. (#66)
+
 ## [0.8.1] - 2026-06-14
 
 ### Fixed
@@ -577,7 +601,9 @@ Initial KuCoin Futures REST + WebSocket implementation, including:
 - Bullet-public / bullet-private WS token negotiation
 - 100 msg / 10 s sliding-window outbound rate limit
 
-[Unreleased]: https://github.com/nuniesmith/exchange-apiws/compare/v0.8.0...HEAD
+[Unreleased]: https://github.com/nuniesmith/exchange-apiws/compare/v0.9.0...HEAD
+[0.9.0]: https://github.com/nuniesmith/exchange-apiws/compare/v0.8.1...v0.9.0
+[0.8.1]: https://github.com/nuniesmith/exchange-apiws/compare/v0.8.0...v0.8.1
 [0.8.0]: https://github.com/nuniesmith/exchange-apiws/compare/v0.7.0...v0.8.0
 [0.7.0]: https://github.com/nuniesmith/exchange-apiws/compare/v0.6.0...v0.7.0
 [0.6.0]: https://github.com/nuniesmith/exchange-apiws/compare/v0.5.0...v0.6.0
