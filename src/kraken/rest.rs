@@ -122,9 +122,34 @@ pub struct KrakenAssetPair {
     pub lot_decimals: u32,
     /// Lot multiplier applied to size.
     pub lot_multiplier: u32,
+    /// Minimum order volume (base-asset size), as Kraken's wire string —
+    /// use [`Self::ordermin_f64`] to parse. Absent on some pairs.
+    #[serde(default)]
+    pub ordermin: Option<String>,
+    /// Minimum order cost (quote-asset notional), as Kraken's wire string —
+    /// use [`Self::costmin_f64`] to parse. Absent on some pairs.
+    #[serde(default)]
+    pub costmin: Option<String>,
+    /// Decimal precision for order cost. Absent on some pairs.
+    #[serde(default)]
+    pub cost_decimals: Option<u32>,
     /// Pair status — `"online"`, `"cancel_only"`, `"post_only"`, …
     #[serde(default)]
     pub status: Option<String>,
+}
+
+impl KrakenAssetPair {
+    /// Minimum order volume parsed to `f64` (`None` if absent or malformed).
+    #[must_use]
+    pub fn ordermin_f64(&self) -> Option<f64> {
+        self.ordermin.as_ref().and_then(|s| s.parse().ok())
+    }
+    /// Minimum order cost (notional) parsed to `f64` (`None` if absent or
+    /// malformed).
+    #[must_use]
+    pub fn costmin_f64(&self) -> Option<f64> {
+        self.costmin.as_ref().and_then(|s| s.parse().ok())
+    }
 }
 
 /// Ticker for a single pair returned by `GET /0/public/Ticker`.
@@ -779,6 +804,36 @@ mod tests {
         assert_eq!(p.altname, "XBTUSD");
         assert!(p.wsname.is_none());
         assert!(p.status.is_none());
+        // Minimum-order fields are absent on this trimmed pair.
+        assert!(p.ordermin.is_none());
+        assert!(p.costmin.is_none());
+        assert!(p.cost_decimals.is_none());
+        assert!(p.ordermin_f64().is_none());
+        assert!(p.costmin_f64().is_none());
+    }
+
+    #[test]
+    fn asset_pair_parses_min_order_fields() {
+        // Representative pair carrying ordermin / costmin / cost_decimals.
+        let raw = r#"{
+            "altname": "XBTUSD",
+            "wsname": "XBT/USD",
+            "base": "XXBT",
+            "quote": "ZUSD",
+            "pair_decimals": 1,
+            "lot_decimals": 8,
+            "lot_multiplier": 1,
+            "ordermin": "0.00005",
+            "costmin": "0.5",
+            "cost_decimals": 5,
+            "status": "online"
+        }"#;
+        let p: KrakenAssetPair = serde_json::from_str(raw).expect("deserialize");
+        assert_eq!(p.ordermin.as_deref(), Some("0.00005"));
+        assert_eq!(p.costmin.as_deref(), Some("0.5"));
+        assert_eq!(p.cost_decimals, Some(5));
+        assert!((p.ordermin_f64().expect("ordermin") - 0.00005).abs() < 1e-12);
+        assert!((p.costmin_f64().expect("costmin") - 0.5).abs() < 1e-12);
     }
 
     #[test]
