@@ -124,7 +124,8 @@ pub mod okx;
 
 #[cfg(feature = "binance")]
 pub use binance::{
-    BinanceConnector, BinanceRestClient, BinanceUserDataConnector, BinanceUserDataRest,
+    BinanceAccountInfo, BinanceBalance, BinanceConnector, BinanceCredentials, BinanceOrderAck,
+    BinanceRestClient, BinanceSignedRest, BinanceUserDataConnector, BinanceUserDataRest,
 };
 #[cfg(feature = "bybit")]
 pub use bybit::{
@@ -214,7 +215,8 @@ pub mod prelude {
     // Per-exchange clients + connectors (feature-gated).
     #[cfg(feature = "binance")]
     pub use crate::binance::{
-        BinanceConnector, BinanceRestClient, BinanceUserDataConnector, BinanceUserDataRest,
+        BinanceConnector, BinanceCredentials, BinanceRestClient, BinanceSignedRest,
+        BinanceUserDataConnector, BinanceUserDataRest,
     };
     #[cfg(feature = "bybit")]
     pub use crate::bybit::{BybitCategory, BybitConnector, BybitRestClient};
