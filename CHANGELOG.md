@@ -6,6 +6,26 @@ and the project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.
 
 ## [Unreleased]
 
+## [0.10.0] - 2026-07-15
+
+### Added
+
+- Crypto.com `private/user-balance` responses are now modelled by
+  `CryptocomUserBalance` (account-level margin/collateral totals) and
+  `CryptocomPositionBalance` (per-asset breakdown), both exported from
+  `cryptocom`. Monetary fields are wire-precision strings tolerant of JSON
+  string or number form, with `total_available_balance_f64()` /
+  `total_cash_balance_f64()` / `quantity_f64()` / `market_value_f64()`
+  accessors.
+
+### Changed
+
+- **BREAKING: Crypto.com `get_user_balance` now returns
+  `Result<Vec<CryptocomUserBalance>>` instead of `Result<serde_json::Value>`**
+  — one entry per account in the endpoint's `data[]` array (typically a single
+  element). This was the last untyped balance reader in the crate; callers
+  matching on `serde_json::Value` must move to the typed structs.
+
 ## [0.9.0] - 2026-07-08
 
 ### Added
