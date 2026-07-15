@@ -84,6 +84,46 @@ async fn request_body_carries_signed_envelope() {
 }
 
 #[tokio::test]
+async fn get_user_balance_returns_typed_accounts() {
+    let server = MockServer::start().await;
+    Mock::given(method("POST"))
+        .and(path("/private/user-balance"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(ok_envelope(json!({
+            "data": [{
+                "total_available_balance": "5.11",
+                "total_margin_balance": "5.11",
+                "total_cash_balance": "10.21",
+                "total_collateral_value": "5.11",
+                "instrument_name": "USD",
+                "is_liquidating": false,
+                "position_balances": [
+                    {
+                        "quantity": "0.0002",
+                        "reserved_qty": "0",
+                        "max_withdrawal_balance": "0.0002",
+                        "instrument_name": "BTC",
+                        "market_value": "5.11"
+                    }
+                ]
+            }]
+        }))))
+        .expect(1)
+        .mount(&server)
+        .await;
+
+    let accounts = sim_client(&server)
+        .get_user_balance()
+        .await
+        .expect("user balance");
+    assert_eq!(accounts.len(), 1);
+    assert_eq!(accounts[0].instrument_name.as_deref(), Some("USD"));
+    assert!((accounts[0].total_cash_balance_f64() - 10.21).abs() < 1e-9);
+    assert_eq!(accounts[0].position_balances.len(), 1);
+    assert_eq!(accounts[0].position_balances[0].instrument_name, "BTC");
+    assert!((accounts[0].position_balances[0].quantity_f64() - 0.0002).abs() < 1e-9);
+}
+
+#[tokio::test]
 async fn signed_envelope_matches_canonical_algorithm() {
     // Single test that pins the exact signing-payload contract by
     // recomputing the sig from intercepted (id, nonce, params) and

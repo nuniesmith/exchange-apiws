@@ -132,7 +132,7 @@ in.
 
 ```toml
 [dependencies]
-exchange-apiws = "0.9"
+exchange-apiws = "0.10"
 tokio = { version = "1", features = ["rt-multi-thread", "macros"] }
 ```
 
@@ -144,10 +144,10 @@ The non-KuCoin exchanges are opt-out via Cargo features
 
 ```toml
 # KuCoin-only
-exchange-apiws = { version = "0.9", default-features = false }
+exchange-apiws = { version = "0.10", default-features = false }
 
 # KuCoin + Binance
-exchange-apiws = { version = "0.9", default-features = false, features = ["binance"] }
+exchange-apiws = { version = "0.10", default-features = false, features = ["binance"] }
 ```
 
 KuCoin and the shared runtime (`actors`, `client`, `auth`, `http`,

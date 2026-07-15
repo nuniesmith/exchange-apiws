@@ -145,6 +145,133 @@ struct AccountSummary {
     accounts: Vec<CryptocomBalance>,
 }
 
+/// One account snapshot from `private/user-balance`, the modern v1 balance
+/// endpoint.
+///
+/// Carries the account-level margin/collateral totals plus a per-asset
+/// [`position_balances`](Self::position_balances) breakdown.
+///
+/// Every monetary field is normalised to `String` (Crypto.com sends them as
+/// JSON strings on this endpoint, but the `flex` helpers also tolerate JSON
+/// numbers for forward-compatibility); parse with the `*_f64` accessors or
+/// `.parse::<f64>()` where arithmetic is needed. Fields absent from a given
+/// account state default rather than fail the deserialise.
+#[derive(Debug, Clone, Default, Deserialize)]
+pub struct CryptocomUserBalance {
+    /// Settlement/quote instrument the account totals are denominated in
+    /// (e.g. `"USD"`).
+    #[serde(default)]
+    pub instrument_name: Option<String>,
+    /// Total balance available to open new positions.
+    #[serde(default, deserialize_with = "flex::opt_string")]
+    pub total_available_balance: Option<String>,
+    /// Total margin balance (collateral value net of unrealised PnL).
+    #[serde(default, deserialize_with = "flex::opt_string")]
+    pub total_margin_balance: Option<String>,
+    /// Total initial margin committed across positions.
+    #[serde(default, deserialize_with = "flex::opt_string")]
+    pub total_initial_margin: Option<String>,
+    /// Total maintenance margin required across positions.
+    #[serde(default, deserialize_with = "flex::opt_string")]
+    pub total_maintenance_margin: Option<String>,
+    /// Total position cost (notional of open positions).
+    #[serde(default, deserialize_with = "flex::opt_string")]
+    pub total_position_cost: Option<String>,
+    /// Total cash balance across the account.
+    #[serde(default, deserialize_with = "flex::opt_string")]
+    pub total_cash_balance: Option<String>,
+    /// Total collateral value (haircut-weighted).
+    #[serde(default, deserialize_with = "flex::opt_string")]
+    pub total_collateral_value: Option<String>,
+    /// Session unrealised PnL.
+    #[serde(default, deserialize_with = "flex::opt_string")]
+    pub total_session_unrealized_pnl: Option<String>,
+    /// Session realised PnL.
+    #[serde(default, deserialize_with = "flex::opt_string")]
+    pub total_session_realized_pnl: Option<String>,
+    /// Total effective leverage.
+    #[serde(default, deserialize_with = "flex::opt_string")]
+    pub total_effective_leverage: Option<String>,
+    /// Position notional limit for the account.
+    #[serde(default, deserialize_with = "flex::opt_string")]
+    pub position_limit: Option<String>,
+    /// Position notional currently used against `position_limit`.
+    #[serde(default, deserialize_with = "flex::opt_string")]
+    pub used_position_limit: Option<String>,
+    /// Total borrow across the account.
+    #[serde(default, deserialize_with = "flex::opt_string")]
+    pub total_borrow: Option<String>,
+    /// Margin health score.
+    #[serde(default, deserialize_with = "flex::opt_string")]
+    pub margin_score: Option<String>,
+    /// Whether the account is currently being liquidated.
+    #[serde(default)]
+    pub is_liquidating: bool,
+    /// Per-asset balance breakdown.
+    #[serde(default)]
+    pub position_balances: Vec<CryptocomPositionBalance>,
+}
+
+impl CryptocomUserBalance {
+    /// Parse `total_available_balance` as `f64` (`0.0` when absent / malformed).
+    #[must_use]
+    pub fn total_available_balance_f64(&self) -> f64 {
+        opt_f64(self.total_available_balance.as_deref())
+    }
+
+    /// Parse `total_cash_balance` as `f64` (`0.0` when absent / malformed).
+    #[must_use]
+    pub fn total_cash_balance_f64(&self) -> f64 {
+        opt_f64(self.total_cash_balance.as_deref())
+    }
+}
+
+/// One per-asset entry inside a [`CryptocomUserBalance`]'s
+/// `position_balances` array from `private/user-balance`.
+#[derive(Debug, Clone, Default, Deserialize)]
+pub struct CryptocomPositionBalance {
+    /// Asset / token symbol (e.g. `"BTC"`, `"USD"`).
+    #[serde(default)]
+    pub instrument_name: String,
+    /// Holding quantity in the asset.
+    #[serde(default, deserialize_with = "flex::opt_string")]
+    pub quantity: Option<String>,
+    /// Quantity reserved by open orders.
+    #[serde(default, deserialize_with = "flex::opt_string")]
+    pub reserved_qty: Option<String>,
+    /// Collateral amount contributed by the holding.
+    #[serde(default, deserialize_with = "flex::opt_string")]
+    pub collateral_amount: Option<String>,
+    /// Collateral weight (haircut) applied to the holding.
+    #[serde(default, deserialize_with = "flex::opt_string")]
+    pub collateral_weight: Option<String>,
+    /// Balance free for withdrawal.
+    #[serde(default, deserialize_with = "flex::opt_string")]
+    pub max_withdrawal_balance: Option<String>,
+    /// Mark-to-market value of the holding in the account's quote currency.
+    #[serde(default, deserialize_with = "flex::opt_string")]
+    pub market_value: Option<String>,
+}
+
+impl CryptocomPositionBalance {
+    /// Parse `quantity` as `f64` (`0.0` when absent / malformed).
+    #[must_use]
+    pub fn quantity_f64(&self) -> f64 {
+        opt_f64(self.quantity.as_deref())
+    }
+
+    /// Parse `market_value` as `f64` (`0.0` when absent / malformed).
+    #[must_use]
+    pub fn market_value_f64(&self) -> f64 {
+        opt_f64(self.market_value.as_deref())
+    }
+}
+
+/// Parse an optional wire-decimal string to `f64`; `0.0` when absent/malformed.
+fn opt_f64(v: Option<&str>) -> f64 {
+    v.and_then(|s| s.parse().ok()).unwrap_or(0.0)
+}
+
 /// Inner `{"data": [...]}` wrapper used by the list endpoints (open-orders,
 /// trades). Kept local since the public side's equivalent is private to
 /// [`crate::cryptocom::rest`].
@@ -596,10 +723,14 @@ impl CryptocomPrivateClient {
     /// `POST /private/user-balance` — current account balances on the **v1**
     /// Exchange API (the modern replacement for the deprecated
     /// `get-account-summary`, which `ERR_INTERNAL`s under `/exchange/v1`).
-    /// Takes no params; returns the `result` object whose `data[0]` carries a
-    /// `position_balances[]` array of `{instrument_name, quantity, ...}`.
-    pub async fn get_user_balance(&self) -> Result<Value> {
-        self.post("private/user-balance", json!({})).await
+    ///
+    /// Takes no params. Returns one [`CryptocomUserBalance`] per account in the
+    /// endpoint's `data[]` array (typically a single element), each carrying the
+    /// account-level totals plus a `position_balances[]` per-asset breakdown.
+    pub async fn get_user_balance(&self) -> Result<Vec<CryptocomUserBalance>> {
+        let wrapper: DataList<CryptocomUserBalance> =
+            self.post("private/user-balance", json!({})).await?;
+        Ok(wrapper.data)
     }
 
     /// `POST /private/create-order` — place a new order.
@@ -822,5 +953,79 @@ mod tests {
         assert_eq!(bal.balance.as_deref(), Some("0.5"));
         assert_eq!(bal.available.as_deref(), Some("0.4"));
         assert!(bal.stake.is_none());
+    }
+
+    #[test]
+    fn user_balance_deserializes_with_position_breakdown() {
+        // Representative `data[0]` snapshot from `private/user-balance`.
+        let raw = r#"{
+            "total_available_balance": "5.11",
+            "total_margin_balance": "5.11",
+            "total_initial_margin": "0",
+            "total_maintenance_margin": "0",
+            "total_position_cost": "0",
+            "total_cash_balance": "10.21",
+            "total_collateral_value": "5.11",
+            "total_session_unrealized_pnl": "0",
+            "instrument_name": "USD",
+            "total_session_realized_pnl": "0",
+            "position_balances": [
+                {
+                    "quantity": "0.0002",
+                    "reserved_qty": "0",
+                    "collateral_amount": "5.11",
+                    "collateral_weight": "0.9",
+                    "max_withdrawal_balance": "0.0002",
+                    "instrument_name": "BTC",
+                    "market_value": "5.11"
+                },
+                {
+                    "quantity": "5.10",
+                    "instrument_name": "USD",
+                    "market_value": "5.10"
+                }
+            ],
+            "total_effective_leverage": "0",
+            "position_limit": "3000000",
+            "used_position_limit": "0",
+            "is_liquidating": false
+        }"#;
+        let bal: CryptocomUserBalance =
+            serde_json::from_str(raw).expect("deserialize user balance");
+        assert_eq!(bal.instrument_name.as_deref(), Some("USD"));
+        assert!((bal.total_available_balance_f64() - 5.11).abs() < 1e-9);
+        assert!((bal.total_cash_balance_f64() - 10.21).abs() < 1e-9);
+        assert!(!bal.is_liquidating);
+        assert_eq!(bal.position_balances.len(), 2);
+        assert_eq!(bal.position_balances[0].instrument_name, "BTC");
+        assert!((bal.position_balances[0].quantity_f64() - 0.0002).abs() < 1e-9);
+        assert!((bal.position_balances[0].market_value_f64() - 5.11).abs() < 1e-9);
+        // Fields absent from the second entry default rather than fail.
+        assert!(bal.position_balances[1].reserved_qty.is_none());
+    }
+
+    #[test]
+    fn user_balance_tolerates_numeric_amounts() {
+        // The `flex` helpers accept JSON numbers as well as strings.
+        let bal: CryptocomUserBalance = serde_json::from_str(
+            r#"{"instrument_name":"USD","total_cash_balance":10.5,"position_balances":[]}"#,
+        )
+        .expect("deserialize numeric amounts");
+        assert_eq!(bal.total_cash_balance.as_deref(), Some("10.5"));
+        assert!(bal.position_balances.is_empty());
+    }
+
+    #[test]
+    fn user_balance_malformed_errs_not_panics() {
+        // Adversarial payload: `position_balances` arrives as a string instead
+        // of an array. This must surface a deserialize error, never panic.
+        let malformed = r#"{"instrument_name":"USD","position_balances":"not-an-array"}"#;
+        let res: std::result::Result<CryptocomUserBalance, _> = serde_json::from_str(malformed);
+        assert!(res.is_err(), "malformed position_balances must Err");
+
+        // A wrongly-typed scalar (bool field given a string) must also Err.
+        let bad_bool = r#"{"is_liquidating":"maybe","position_balances":[]}"#;
+        let res2: std::result::Result<CryptocomUserBalance, _> = serde_json::from_str(bad_bool);
+        assert!(res2.is_err(), "non-bool is_liquidating must Err");
     }
 }
