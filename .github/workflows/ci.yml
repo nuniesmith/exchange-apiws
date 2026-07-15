@@ -87,6 +87,27 @@ jobs:
         env:
           RUSTDOCFLAGS: "-D warnings"
 
+  semver:
+    name: cargo-semver-checks
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: semver
+      # Compare the crate's public API against the latest release on
+      # crates.io and FAIL if it changed in a way that isn't covered by the
+      # declared version bump (check-release semantics). This is a blocking
+      # gate: an undeclared breaking change must not reach a published
+      # release silently. When a break is intentional, bump the version in
+      # Cargo.toml (and note it in CHANGELOG.md) and the check goes green.
+      # `all-features` is checked so every optional exchange connector's
+      # surface is covered, matching the docs.rs / published build.
+      - uses: obi1kenobi/cargo-semver-checks-action@v2
+        with:
+          feature-group: all-features
+
   msrv:
     name: msrv (1.94.1)
     runs-on: ubuntu-latest
