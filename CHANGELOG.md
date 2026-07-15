@@ -6,6 +6,23 @@ and the project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.
 
 ## [Unreleased]
 
+### Added
+
+- Binance **signed** REST client `BinanceSignedRest` (feature `binance`),
+  keyed by `BinanceCredentials` (`ZeroizeOnDrop`; `from_env` reads
+  `BINANCE_API_KEY` / `BINANCE_API_SECRET`). Signs each request with
+  HMAC-SHA256 over the exact serialized query string per Binance's spec —
+  `signature` appended as a trailing param, API key in the `X-MBX-APIKEY`
+  header, secret never sent or logged.
+  - `get_account()` → typed `BinanceAccountInfo` with a `BinanceBalance` list
+    (wire-precision `free`/`locked` strings tolerant of JSON string or number
+    form, plus `free_f64()` / `locked_f64()` / `total_f64()` accessors and
+    `non_zero_balances()` / `balance()` helpers).
+  - `place_order()` → typed `BinanceOrderAck` (signed `POST /api/v3/order`).
+  - Binance `{code,msg}` error bodies surface as `ExchangeError::Api`.
+  - Signing correctness is pinned by a known-answer test against Binance's
+    published HMAC-SHA256 documentation vector.
+
 ## [0.10.0] - 2026-07-15
 
 ### Added

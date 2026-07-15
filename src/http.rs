@@ -23,7 +23,12 @@
 
 use std::time::Duration;
 
-#[cfg(any(feature = "bybit", feature = "kraken", feature = "cryptocom"))]
+#[cfg(any(
+    feature = "binance",
+    feature = "bybit",
+    feature = "kraken",
+    feature = "cryptocom"
+))]
 use reqwest::RequestBuilder;
 use reqwest::{Client, StatusCode};
 use serde::de::DeserializeOwned;
@@ -279,7 +284,12 @@ fn parse_retry_after(resp: &reqwest::Response) -> Option<Duration> {
 /// 100 ms so a tight loop still yields.
 // Only the signed private REST clients reuse this; gate it so a KuCoin-only
 // (no optional exchanges) build doesn't trip `-D warnings` on dead code.
-#[cfg(any(feature = "bybit", feature = "kraken", feature = "cryptocom"))]
+#[cfg(any(
+    feature = "binance",
+    feature = "bybit",
+    feature = "kraken",
+    feature = "cryptocom"
+))]
 fn backoff_wait(attempt: u32) -> Duration {
     let base = DEFAULT_BACKOFF.powi(attempt.cast_signed() + 1);
     Duration::from_secs_f64((base + jitter_secs(base)).max(0.1))
@@ -310,7 +320,12 @@ fn backoff_wait(attempt: u32) -> Duration {
 /// `label` is only used for log lines (e.g. `"Bybit POST /v5/order/create"`).
 // Gated to the signed-exchange features that consume it, so the KuCoin-only
 // build stays free of dead-code warnings under `-D warnings`.
-#[cfg(any(feature = "bybit", feature = "kraken", feature = "cryptocom"))]
+#[cfg(any(
+    feature = "binance",
+    feature = "bybit",
+    feature = "kraken",
+    feature = "cryptocom"
+))]
 pub(crate) async fn send_with_retry<F>(label: &str, mut build: F) -> Result<reqwest::Response>
 where
     F: FnMut() -> RequestBuilder,
@@ -423,7 +438,12 @@ mod tests {
     // The retry helper + its backoff math are gated to the signed-exchange
     // features that consume them; gate the tests the same way so the
     // KuCoin-only build doesn't reference cfg'd-out items.
-    #[cfg(any(feature = "bybit", feature = "kraken", feature = "cryptocom"))]
+    #[cfg(any(
+        feature = "binance",
+        feature = "bybit",
+        feature = "kraken",
+        feature = "cryptocom"
+    ))]
     #[test]
     fn backoff_wait_grows_and_is_floored() {
         // Backoff is jittered, so pin the loose invariants: always ≥ the 100 ms
@@ -441,12 +461,27 @@ mod tests {
 
     // ── send_with_retry: 429 / Retry-After behaviour (wiremock-backed) ─────────
 
-    #[cfg(any(feature = "bybit", feature = "kraken", feature = "cryptocom"))]
+    #[cfg(any(
+        feature = "binance",
+        feature = "bybit",
+        feature = "kraken",
+        feature = "cryptocom"
+    ))]
     use wiremock::matchers::{method, path};
-    #[cfg(any(feature = "bybit", feature = "kraken", feature = "cryptocom"))]
+    #[cfg(any(
+        feature = "binance",
+        feature = "bybit",
+        feature = "kraken",
+        feature = "cryptocom"
+    ))]
     use wiremock::{Mock, MockServer, ResponseTemplate};
 
-    #[cfg(any(feature = "bybit", feature = "kraken", feature = "cryptocom"))]
+    #[cfg(any(
+        feature = "binance",
+        feature = "bybit",
+        feature = "kraken",
+        feature = "cryptocom"
+    ))]
     #[tokio::test]
     async fn send_with_retry_honours_retry_after_then_succeeds() {
         let server = MockServer::start().await;
@@ -482,7 +517,12 @@ mod tests {
         assert_eq!(builds, 2, "builder must run once per attempt (429 + retry)");
     }
 
-    #[cfg(any(feature = "bybit", feature = "kraken", feature = "cryptocom"))]
+    #[cfg(any(
+        feature = "binance",
+        feature = "bybit",
+        feature = "kraken",
+        feature = "cryptocom"
+    ))]
     #[tokio::test]
     async fn send_with_retry_caps_persistent_429s() {
         let server = MockServer::start().await;
@@ -511,7 +551,12 @@ mod tests {
         }
     }
 
-    #[cfg(any(feature = "bybit", feature = "kraken", feature = "cryptocom"))]
+    #[cfg(any(
+        feature = "binance",
+        feature = "bybit",
+        feature = "kraken",
+        feature = "cryptocom"
+    ))]
     #[tokio::test]
     async fn send_with_retry_returns_non_429_errors_unretried() {
         let server = MockServer::start().await;
