@@ -108,6 +108,10 @@ tokio = { version = "1", features = ["rt-multi-thread", "macros", "signal"] }
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 # HTTP mock server for integration tests — spins up a local server per test.
 wiremock = "0.6"
+# Property/fuzz testing for the hand-rolled deserializers. Runs under plain
+# `cargo test` (no separate fuzz runner), so wire-format drift and adversarial
+# payloads on the market-data path are exercised in CI.
+proptest = "1"
 
 # ── Library entry point ────────────────────────────────────────────────────────
 
