@@ -23,6 +23,15 @@ and the project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.
   - Signing correctness is pinned by a known-answer test against Binance's
     published HMAC-SHA256 documentation vector.
 
+## [0.10.1] - 2026-07-16
+
+### Changed
+
+- Loosen the `chrono` dependency from an exact `=0.4.45` pin to a compatible
+  `0.4` range so the crate co-installs with data crates (e.g. polars) that
+  constrain chrono — unblocks downstream consumers (janus). No code or API
+  change.
+
 ## [0.10.0] - 2026-07-15
 
 ### Added
@@ -644,7 +653,9 @@ Initial KuCoin Futures REST + WebSocket implementation, including:
 - Bullet-public / bullet-private WS token negotiation
 - 100 msg / 10 s sliding-window outbound rate limit
 
-[Unreleased]: https://github.com/nuniesmith/exchange-apiws/compare/v0.9.0...HEAD
+[Unreleased]: https://github.com/nuniesmith/exchange-apiws/compare/v0.10.1...HEAD
+[0.10.1]: https://github.com/nuniesmith/exchange-apiws/compare/v0.10.0...v0.10.1
+[0.10.0]: https://github.com/nuniesmith/exchange-apiws/compare/v0.9.0...v0.10.0
 [0.9.0]: https://github.com/nuniesmith/exchange-apiws/compare/v0.8.1...v0.9.0
 [0.8.1]: https://github.com/nuniesmith/exchange-apiws/compare/v0.8.0...v0.8.1
 [0.8.0]: https://github.com/nuniesmith/exchange-apiws/compare/v0.7.0...v0.8.0

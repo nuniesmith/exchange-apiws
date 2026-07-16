@@ -1,6 +1,6 @@
 [package]
 name          = "exchange-apiws"
-version       = "0.10.0"
+version       = "0.10.1"
 edition       = "2024"
 rust-version  = "1.94.1"
 authors       = ["nuniesmith"]
@@ -85,7 +85,11 @@ anyhow    = "1.0.102"
 tracing = "0.1.44"
 
 # Time — serde feature lets Chrono types round-trip through JSON.
-chrono = { version = "=0.4.45", features = ["serde"] }
+# Intentionally a compatible-range constraint ("0.4"), NOT an exact "=" pin: we
+# only touch `chrono::Utc::now().timestamp_millis()` / RFC3339 parsing, which is
+# stable across all of 0.4.x. A range lets the crate co-install with data crates
+# (e.g. polars) that upper-bound chrono, so downstream workspaces resolve cleanly.
+chrono = { version = "0.4", features = ["serde"] }
 
 # Unique client-order IDs.
 uuid = { version = "1.23.0", features = ["v4"] }
