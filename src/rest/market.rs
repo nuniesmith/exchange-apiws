@@ -268,4 +268,70 @@ impl KuCoinClient {
     pub async fn get_ticker(&self, symbol: &str) -> Result<Ticker> {
         self.get("/api/v1/ticker", &[("symbol", symbol)]).await
     }
+
+    /// Fetch KuCoin's current server time in Unix milliseconds.
+    ///
+    /// Endpoint: `GET /api/v1/timestamp` (the response `data` is a bare
+    /// millisecond integer).
+    pub async fn get_server_time(&self) -> Result<i64> {
+        self.get("/api/v1/timestamp", &[]).await
+    }
+
+    /// Currently-applied signed clock offset in milliseconds
+    /// (`server_time - local_time`). `0` until [`sync_server_time`] has run.
+    ///
+    /// [`sync_server_time`]: Self::sync_server_time
+    pub fn time_offset_ms(&self) -> i64 {
+        self.time_offset_ms
+            .load(std::sync::atomic::Ordering::Relaxed)
+    }
+
+    /// Synchronise the signed-request clock against KuCoin's server time.
+    ///
+    /// Measures `offset = server_time - local_time` and caches it (shared
+    /// across all clones of this client); every subsequent signed request adds
+    /// the offset to its `KC-API-TIMESTAMP`, keeping requests inside KuCoin's
+    /// ±5 s tolerance even when the local NTP clock drifts. Call once at
+    /// startup and periodically thereafter. Returns the new offset in ms.
+    ///
+    /// This is the **hard** variant — a failed fetch is returned as an error.
+    /// For a fire-and-forget periodic refresh that never disrupts trading, use
+    /// [`refresh_server_time`](Self::refresh_server_time).
+    pub async fn sync_server_time(&self) -> Result<i64> {
+        // Read the local clock as close as possible to the request so the
+        // offset reflects true skew, not round-trip latency. (Sub-second RTT is
+        // negligible against KuCoin's ±5 s window.)
+        let local_ms = chrono::Utc::now().timestamp_millis();
+        let server_ms = self.get_server_time().await?;
+        let offset = server_ms - local_ms;
+        self.time_offset_ms
+            .store(offset, std::sync::atomic::Ordering::Relaxed);
+        debug!(
+            server_ms,
+            local_ms,
+            offset_ms = offset,
+            "server-time synced"
+        );
+        Ok(offset)
+    }
+
+    /// Soft-failing variant of [`sync_server_time`](Self::sync_server_time).
+    ///
+    /// On success updates the offset and returns `Some(offset)`. On any failure
+    /// it logs a warning, **leaves the existing offset untouched** (falling
+    /// back to local time / the last good offset), and returns `None`. Safe to
+    /// call on a timer without ever interrupting live trading.
+    pub async fn refresh_server_time(&self) -> Option<i64> {
+        match self.sync_server_time().await {
+            Ok(offset) => Some(offset),
+            Err(e) => {
+                tracing::warn!(
+                    error = %e,
+                    current_offset_ms = self.time_offset_ms(),
+                    "server-time refresh failed — keeping current clock offset"
+                );
+                None
+            }
+        }
+    }
 }

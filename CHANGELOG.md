@@ -6,10 +6,77 @@ and the project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.
 
 ## [Unreleased]
 
+## [0.11.0] - 2026-07-19
+
+M2 KuCoin-futures venue-truth hardening — the live-trading correctness fixes
+the futures bot's arm path depends on. Pre-1.0 minor bump (breaking boundary):
+`OrderDetail` gains fields and becomes `#[non_exhaustive]`; everything else is
+purely additive (verified with `cargo-semver-checks`).
+
+### Fixed
+
+- **`OrderDetail::is_active()` no longer misreads every resting order as
+  inactive.** It previously compared `status == "active"`, but KuCoin
+  **Futures** only ever emits `status` `"open"` (resting) or `"done"`
+  (terminal) — `"active"` is the query *filter*, never a wire value. Every
+  real resting limit order therefore reported `is_active() == false`, which the
+  fks-spawner adapter maps to `OrderStatus::Cancelled` — i.e. the order tracker
+  would think a live resting stop/limit had vanished. `is_active()` now prefers
+  KuCoin's authoritative `isActive` boolean and falls back to
+  `status != "done"`. The mock tests that self-confirmed the `"active"` fiction
+  were corrected to the real `"open"` + `isActive` wire shape, and fixture
+  tests were added for every lifecycle state (new / open / partially-filled /
+  filled / cancelled / pending-cancel).
+
 ### Added
 
-- Binance **signed** REST client `BinanceSignedRest` (feature `binance`),
-  keyed by `BinanceCredentials` (`ZeroizeOnDrop`; `from_env` reads
+- `OrderDetail` now decodes KuCoin's `isActive` boolean (as `active`) and
+  `cancelExist` (as `cancel_exist`), and exposes `is_cancelled()` (terminal and
+  not fully filled, or `cancelExist == true`). The struct is now
+  `#[non_exhaustive]` (deserialize-only) so future wire fields are additive.
+- **Ambiguous-fill recovery surface** (additive — existing signatures
+  unchanged):
+  - `SubmittedOrder { order_id, client_oid }` and client-oid-retaining submit
+    variants `place_order_with_client_oid`, `close_position_with_client_oid`,
+    and `place_stop_order_with_client_oid`. The `clientOid` is chosen (or
+    minted) *before* the request leaves and returned to the caller, so a
+    timed-out submit remains reconcilable. `place_order`/`close_position`/
+    `place_stop_order` are unchanged and now delegate to these.
+  - `KuCoinClient::get_order_by_client_oid` (`GET /api/v1/orders/byClientOid`)
+    — the recovery primitive: after an ambiguous submit, learn whether the
+    order actually landed.
+- **Error taxonomy** on `ExchangeError` (additive; enum stays
+  `#[non_exhaustive]`): `ErrorClass { Retriable, Fatal, Ambiguous { client_oid } }`
+  with `classify()` (reads/queries) and `classify_submit(client_oid)` (order
+  placement — a transport failure or duplicate-`clientOid` rejection becomes
+  `Ambiguous`, carrying the oid to reconcile with). Plus predicates
+  `is_retriable()`, `is_rate_limited()`, `is_auth()`, `is_clock_skew()`,
+  `is_duplicate_client_oid()`, and `kucoin_code()`, backed by a KuCoin code
+  table (429/5xx/system-busy → retriable; 400002/400003 timestamp → retriable
+  after resync; 400004-400007 signature/permission → fatal auth; insufficient
+  balance / bad params → fatal).
+- **Clock-skew margin.** `KuCoinClient::sync_server_time` fetches
+  `GET /api/v1/timestamp`, caches a signed `server_time - local_time` offset
+  (shared across client clones), and applies it to every signed request's
+  `KC-API-TIMESTAMP` so requests stay inside KuCoin's ±5 s tolerance under
+  local NTP drift. `refresh_server_time` is the **soft-failing** timer variant
+  (logs a warning and keeps the last good offset on failure — never disrupts
+  trading); `get_server_time` and `time_offset_ms` accessor round it out.
+  `auth::build_headers_with_offset` and the pure `auth::skewed_timestamp_ms`
+  expose the mechanism; `build_headers` is unchanged (offset 0). A KuCoin
+  signing **known-answer test** was added alongside Binance's.
+- Property/fuzz coverage for KuCoin's hand-rolled deserializers
+  (`tests/kucoin_deser_proptest.rs`) — the venue #72 skipped: `OrderDetail`
+  (the order-status decoder) and `Fill` (the `de_f64_flexible` string-or-number
+  path) never panic on arbitrary/adversarial JSON, and `OrderDetail`'s status
+  predicates stay internally consistent.
+
+### Changed
+
+- Binance **signed** REST client `BinanceSignedRest` (feature `binance`) —
+  landed in the codebase before this release but previously documented only
+  under `[Unreleased]`; recorded here for the first tagged release that ships
+  it. Keyed by `BinanceCredentials` (`ZeroizeOnDrop`; `from_env` reads
   `BINANCE_API_KEY` / `BINANCE_API_SECRET`). Signs each request with
   HMAC-SHA256 over the exact serialized query string per Binance's spec —
   `signature` appended as a trailing param, API key in the `X-MBX-APIKEY`

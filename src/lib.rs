@@ -142,7 +142,7 @@ pub use cryptocom::{
     CryptocomConnector, CryptocomCredentials, CryptocomPrivateClient, CryptocomRestClient,
     CryptocomUserConnector,
 };
-pub use error::{ExchangeError, Result};
+pub use error::{ErrorClass, ExchangeError, Result};
 pub use http::PublicRestClient;
 #[cfg(feature = "kraken")]
 pub use kraken::{KrakenConnector, KrakenCredentials, KrakenPrivateClient, KrakenRestClient};

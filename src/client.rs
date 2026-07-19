@@ -17,6 +17,8 @@
 //! authenticated [`KuCoinClient`] and the public
 //! [`PublicRestClient`](crate::http::PublicRestClient) stay in sync.
 
+use std::sync::Arc;
+use std::sync::atomic::{AtomicI64, Ordering};
 use std::time::Duration;
 
 use reqwest::{Client, RequestBuilder, StatusCode};
@@ -25,7 +27,7 @@ use serde_json::Value;
 use tracing::warn;
 use zeroize::ZeroizeOnDrop;
 
-use crate::auth::build_headers;
+use crate::auth::build_headers_with_offset;
 use crate::error::{ExchangeError, Result};
 use crate::http::{
     DEFAULT_BACKOFF, DEFAULT_RETRIES, MAX_RATE_LIMIT_RETRIES, build_query_string, jitter_secs,
@@ -97,6 +99,11 @@ pub struct KuCoinClient {
     pub(crate) http: Client,
     pub(crate) creds: Credentials,
     pub(crate) base_url: String,
+    /// Signed server-time offset in milliseconds (`server_time - local_time`),
+    /// applied to every signed request's `KC-API-TIMESTAMP`. Shared across
+    /// clones so a single [`sync_server_time`](KuCoinClient::sync_server_time)
+    /// updates all handles. Defaults to `0` (raw local time) until synced.
+    pub(crate) time_offset_ms: Arc<AtomicI64>,
 }
 
 impl KuCoinClient {
@@ -115,6 +122,7 @@ impl KuCoinClient {
             http,
             creds,
             base_url: base_url.into(),
+            time_offset_ms: Arc::new(AtomicI64::new(0)),
         })
     }
 
@@ -214,13 +222,14 @@ impl KuCoinClient {
         let mut attempt: u32 = 0;
 
         while attempt < retries {
-            let headers = build_headers(
+            let headers = build_headers_with_offset(
                 &self.creds.key,
                 &self.creds.secret,
                 &self.creds.passphrase,
                 verb,
                 endpoint,
                 body_str,
+                self.time_offset_ms.load(Ordering::Relaxed),
             )?;
 
             // Build the request for this verb. `RequestBuilder` is consumed by
