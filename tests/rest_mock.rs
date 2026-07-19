@@ -10,9 +10,9 @@
 //! ```
 
 use exchange_apiws::{
-    ExchangeError, KuCoinClient,
+    ErrorClass, ExchangeError, KuCoinClient,
     client::Credentials,
-    rest::MarginModel,
+    rest::{MarginModel, OrderDetail},
     types::{OrderType, Side},
 };
 use wiremock::matchers::{method, path, query_param};
@@ -395,22 +395,27 @@ async fn get_open_orders_returns_items_list() {
         .and(query_param("symbol", "XBTUSDTM"))
         .respond_with(
             ResponseTemplate::new(200).set_body_json(ok_envelope(serde_json::json!({
+                // Real KuCoin Futures wire shape: a resting order has
+                // status "open" and isActive true — NOT status "active"
+                // ("active" is only the request *filter*, never a wire value).
                 "items": [
                     {
-                        "id":     "order-1",
-                        "symbol": "XBTUSDTM",
-                        "side":   "buy",
-                        "type":   "limit",
-                        "status": "active",
-                        "size":   5,
+                        "id":       "order-1",
+                        "symbol":   "XBTUSDTM",
+                        "side":     "buy",
+                        "type":     "limit",
+                        "status":   "open",
+                        "isActive": true,
+                        "size":     5,
                     },
                     {
-                        "id":     "order-2",
-                        "symbol": "XBTUSDTM",
-                        "side":   "sell",
-                        "type":   "market",
-                        "status": "active",
-                        "size":   3,
+                        "id":       "order-2",
+                        "symbol":   "XBTUSDTM",
+                        "side":     "sell",
+                        "type":     "market",
+                        "status":   "open",
+                        "isActive": true,
+                        "size":     3,
                     }
                 ]
             }))),
@@ -1022,7 +1027,9 @@ async fn get_order_by_id_returns_order_detail() {
                 "symbol":      "XBTUSDTM",
                 "side":        "buy",
                 "type":        "limit",
-                "status":      "active",
+                "status":      "open",
+                "isActive":    true,
+                "cancelExist": false,
                 "price":       71000.0,
                 "size":        8,
                 "filledSize":  0,
@@ -1919,4 +1926,338 @@ async fn uta_account_summary_propagates_api_error() {
         }
         other => panic!("expected Api error, got {other:?}"),
     }
+}
+
+// ── OrderDetail wire-status fixtures (every lifecycle state) ────────────────────
+//
+// These pin `OrderDetail`'s classification against the *real* KuCoin Futures
+// wire shapes for each order state — the field that a green-but-fictional mock
+// ("status":"active") previously hid. KuCoin Futures only ever emits status
+// "open" (working) or "done" (terminal), plus an authoritative `isActive`
+// boolean and a `cancelExist` cancel marker.
+
+/// Deserialize an `OrderDetail` straight from a KuCoin Futures order payload.
+fn order_detail(v: serde_json::Value) -> OrderDetail {
+    serde_json::from_value(v).expect("OrderDetail should deserialize from KuCoin wire shape")
+}
+
+#[test]
+fn order_status_new_is_active_not_filled() {
+    // Just-accepted limit order, nothing matched yet.
+    let d = order_detail(serde_json::json!({
+        "id": "o-new", "symbol": "XBTUSDTM", "side": "buy", "type": "limit",
+        "status": "open", "isActive": true, "cancelExist": false,
+        "price": 50000.0, "size": 3, "filledSize": 0,
+    }));
+    assert!(d.is_active(), "new order must read as active");
+    assert!(!d.is_filled());
+    assert!(!d.is_cancelled());
+}
+
+#[test]
+fn order_status_open_resting_is_active() {
+    // The regression case: a resting order the old code marked Cancelled.
+    let d = order_detail(serde_json::json!({
+        "id": "o-open", "symbol": "XBTUSDTM", "side": "sell", "type": "limit",
+        "status": "open", "isActive": true, "cancelExist": false,
+        "price": 90000.0, "size": 5, "filledSize": 0,
+    }));
+    assert!(d.is_active());
+    assert!(!d.is_filled());
+    assert!(!d.is_cancelled());
+}
+
+#[test]
+fn order_status_partially_filled_is_active() {
+    let d = order_detail(serde_json::json!({
+        "id": "o-partial", "symbol": "XBTUSDTM", "side": "buy", "type": "limit",
+        "status": "open", "isActive": true, "cancelExist": false,
+        "price": 50000.0, "size": 10, "filledSize": 4,
+    }));
+    assert!(d.is_active(), "partial fill still rests on the book");
+    assert!(!d.is_filled());
+    assert!(!d.is_cancelled());
+}
+
+#[test]
+fn order_status_filled_is_terminal_and_filled() {
+    let d = order_detail(serde_json::json!({
+        "id": "o-filled", "symbol": "XBTUSDTM", "side": "buy", "type": "market",
+        "status": "done", "isActive": false, "cancelExist": false,
+        "size": 10, "filledSize": 10,
+    }));
+    assert!(!d.is_active());
+    assert!(d.is_filled());
+    assert!(
+        !d.is_cancelled(),
+        "a fully-filled done order is not a cancel"
+    );
+}
+
+#[test]
+fn order_status_cancelled_is_terminal_and_cancelled() {
+    // Cancelled after a partial fill: done + cancelExist, filled < size.
+    let d = order_detail(serde_json::json!({
+        "id": "o-cancelled", "symbol": "XBTUSDTM", "side": "sell", "type": "limit",
+        "status": "done", "isActive": false, "cancelExist": true,
+        "price": 90000.0, "size": 10, "filledSize": 2,
+    }));
+    assert!(!d.is_active());
+    assert!(!d.is_filled());
+    assert!(d.is_cancelled());
+}
+
+#[test]
+fn order_status_pending_cancel_still_active() {
+    // Cancel requested but the order is still working on the book
+    // (isActive true, cancelExist true) — must NOT be treated as gone yet.
+    let d = order_detail(serde_json::json!({
+        "id": "o-pending-cancel", "symbol": "XBTUSDTM", "side": "buy", "type": "limit",
+        "status": "open", "isActive": true, "cancelExist": true,
+        "price": 50000.0, "size": 5, "filledSize": 0,
+    }));
+    assert!(
+        d.is_active(),
+        "pending-cancel is still live until it leaves the book"
+    );
+    assert!(!d.is_filled());
+}
+
+#[test]
+fn order_status_falls_back_to_status_when_isactive_absent() {
+    // Legacy/partial payloads without `isActive`: fall back to status != "done".
+    let open = order_detail(serde_json::json!({
+        "id": "o1", "symbol": "XBTUSDTM", "side": "buy", "type": "limit",
+        "status": "open", "size": 1,
+    }));
+    assert!(open.is_active(), "no isActive + status open => active");
+
+    let done = order_detail(serde_json::json!({
+        "id": "o2", "symbol": "XBTUSDTM", "side": "buy", "type": "market",
+        "status": "done", "size": 1, "filledSize": 1,
+    }));
+    assert!(!done.is_active(), "no isActive + status done => terminal");
+}
+
+// ── get_order_by_client_oid (ambiguous-fill recovery) ──────────────────────────
+
+#[tokio::test]
+async fn get_order_by_client_oid_resolves_resting_order() {
+    let server = MockServer::start().await;
+
+    Mock::given(method("GET"))
+        .and(path("/api/v1/orders/byClientOid"))
+        .and(query_param("clientOid", "my-oid-123"))
+        .respond_with(
+            ResponseTemplate::new(200).set_body_json(ok_envelope(serde_json::json!({
+                "id": "srv-order-9", "symbol": "XBTUSDTM", "side": "buy",
+                "type": "limit", "status": "open", "isActive": true,
+                "cancelExist": false, "price": 50000.0, "size": 1, "filledSize": 0,
+                "clientOid": "my-oid-123",
+            }))),
+        )
+        .mount(&server)
+        .await;
+
+    let order = sim_client(&server.uri())
+        .get_order_by_client_oid("my-oid-123")
+        .await
+        .expect("byClientOid lookup failed");
+    assert_eq!(order.id, "srv-order-9");
+    assert!(order.is_active(), "resolved resting order reads as active");
+}
+
+#[tokio::test]
+async fn get_order_by_client_oid_not_found_surfaces_api_error() {
+    // KuCoin returns a non-200000 code when no order matches the clientOid —
+    // that's the signal the submit never landed.
+    let server = MockServer::start().await;
+
+    Mock::given(method("GET"))
+        .and(path("/api/v1/orders/byClientOid"))
+        .respond_with(
+            ResponseTemplate::new(200).set_body_json(err_envelope("400100", "order not exist")),
+        )
+        .mount(&server)
+        .await;
+
+    let err = sim_client(&server.uri())
+        .get_order_by_client_oid("never-placed")
+        .await
+        .expect_err("missing order should error");
+    assert_eq!(err.kucoin_code(), Some("400100"));
+}
+
+// ── client-oid-retaining submit variants ───────────────────────────────────────
+
+#[tokio::test]
+async fn place_order_with_client_oid_returns_the_oid() {
+    let server = MockServer::start().await;
+
+    Mock::given(method("POST"))
+        .and(path("/api/v1/orders"))
+        .respond_with(
+            ResponseTemplate::new(200)
+                .set_body_json(ok_envelope(serde_json::json!({ "orderId": "srv-42" }))),
+        )
+        .mount(&server)
+        .await;
+
+    let submitted = sim_client(&server.uri())
+        .place_order_with_client_oid(
+            "caller-oid-7",
+            "XBTUSDTM",
+            Side::Buy,
+            1,
+            10,
+            OrderType::Market,
+            None,
+            None,
+            false,
+            None,
+        )
+        .await
+        .expect("submit failed");
+    assert_eq!(submitted.order_id, "srv-42");
+    assert_eq!(
+        submitted.client_oid, "caller-oid-7",
+        "the caller-supplied clientOid must round-trip back for reconciliation"
+    );
+}
+
+#[tokio::test]
+async fn close_position_with_client_oid_returns_the_oid() {
+    let server = MockServer::start().await;
+
+    Mock::given(method("POST"))
+        .and(path("/api/v1/orders"))
+        .respond_with(
+            ResponseTemplate::new(200)
+                .set_body_json(ok_envelope(serde_json::json!({ "orderId": "close-99" }))),
+        )
+        .mount(&server)
+        .await;
+
+    let submitted = sim_client(&server.uri())
+        .close_position_with_client_oid("close-oid-1", "XBTUSDTM", 3, 10)
+        .await
+        .expect("close failed");
+    assert_eq!(submitted.order_id, "close-99");
+    assert_eq!(submitted.client_oid, "close-oid-1");
+}
+
+// ── error taxonomy on real transport failures ──────────────────────────────────
+
+#[tokio::test]
+async fn submit_transport_failure_classifies_as_ambiguous() {
+    // No server listening on this port → reqwest transport error (ExchangeError::Http).
+    // A submit that fails at transport level is Ambiguous, carrying the clientOid
+    // so the caller can reconcile via byClientOid.
+    let dead = "http://127.0.0.1:1"; // port 1: connection refused
+    let err = sim_client(dead)
+        .place_order_with_client_oid(
+            "amb-oid-1",
+            "XBTUSDTM",
+            Side::Buy,
+            1,
+            10,
+            OrderType::Market,
+            None,
+            None,
+            false,
+            None,
+        )
+        .await
+        .expect_err("dead endpoint should error");
+    assert!(
+        matches!(err, ExchangeError::Http(_)),
+        "expected Http, got {err:?}"
+    );
+    match err.classify_submit("amb-oid-1") {
+        ErrorClass::Ambiguous { client_oid } => {
+            assert_eq!(client_oid.as_deref(), Some("amb-oid-1"));
+        }
+        other => panic!("expected Ambiguous, got {other:?}"),
+    }
+}
+
+#[tokio::test]
+async fn insufficient_balance_classifies_as_fatal() {
+    let server = MockServer::start().await;
+
+    Mock::given(method("POST"))
+        .and(path("/api/v1/orders"))
+        .respond_with(
+            ResponseTemplate::new(200)
+                .set_body_json(err_envelope("300000", "Balance insufficient")),
+        )
+        .mount(&server)
+        .await;
+
+    let err = sim_client(&server.uri())
+        .place_order_with_client_oid(
+            "oid",
+            "XBTUSDTM",
+            Side::Buy,
+            100,
+            10,
+            OrderType::Market,
+            None,
+            None,
+            false,
+            None,
+        )
+        .await
+        .expect_err("should error");
+    assert_eq!(err.classify_submit("oid"), ErrorClass::Fatal);
+    assert!(!err.is_retriable());
+}
+
+// ── server-time sync (clock-skew offset) ───────────────────────────────────────
+
+#[tokio::test]
+async fn sync_server_time_caches_offset() {
+    let server = MockServer::start().await;
+    // Server clock ~1 hour ahead of local — a gross skew the offset must absorb.
+    let server_ms = chrono::Utc::now().timestamp_millis() + 3_600_000;
+    Mock::given(method("GET"))
+        .and(path("/api/v1/timestamp"))
+        .respond_with(
+            ResponseTemplate::new(200).set_body_json(ok_envelope(serde_json::json!(server_ms))),
+        )
+        .mount(&server)
+        .await;
+
+    let client = sim_client(&server.uri());
+    assert_eq!(client.time_offset_ms(), 0, "offset starts at 0");
+    let offset = client.sync_server_time().await.expect("sync failed");
+    // Offset ≈ +1h (within a small scheduling delta).
+    assert!(
+        (offset - 3_600_000).abs() < 5_000,
+        "offset ~= +1h, got {offset}"
+    );
+    assert_eq!(
+        client.time_offset_ms(),
+        offset,
+        "offset is cached on the client"
+    );
+}
+
+#[tokio::test]
+async fn refresh_server_time_soft_fails_without_disturbing_offset() {
+    let server = MockServer::start().await;
+    Mock::given(method("GET"))
+        .and(path("/api/v1/timestamp"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(err_envelope("500000", "boom")))
+        .mount(&server)
+        .await;
+
+    let client = sim_client(&server.uri());
+    // The soft variant returns None and never errors, leaving the offset intact.
+    assert_eq!(client.refresh_server_time().await, None);
+    assert_eq!(
+        client.time_offset_ms(),
+        0,
+        "failed refresh must not change the offset"
+    );
 }

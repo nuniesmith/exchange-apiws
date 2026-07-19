@@ -14,7 +14,7 @@ pub use margin::{
     MarginOrderDetail, MarginOrderResponse,
 };
 pub use market::{ContractInfo, FundingRate, MarkPrice, OrderBookSnapshot, Ticker};
-pub use orders::{Fill, OrderDetail, OrderResponse, StopOrderDetail};
+pub use orders::{Fill, OrderDetail, OrderResponse, StopOrderDetail, SubmittedOrder};
 pub use uta::{
     CrossMarginAccount, CrossMarginAsset, IsolatedMarginAccount, IsolatedMarginAsset,
     IsolatedMarginPair, UtaAccountSummary,

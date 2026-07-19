@@ -35,6 +35,25 @@ pub struct OrderResponse {
     pub order_id: String,
 }
 
+/// A submitted order paired with the `clientOid` used to place it.
+///
+/// The plain [`OrderResponse`] returns only the exchange-assigned `order_id`,
+/// which is unknown if the submit request times out. The `client_oid` is
+/// chosen by the caller (or minted by the crate) *before* the request leaves,
+/// so it is the only handle guaranteed to exist even when the response never
+/// arrives. Retain it and, on an ambiguous submit, resolve the order's true
+/// fate with [`KuCoinClient::get_order_by_client_oid`].
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SubmittedOrder {
+    /// Exchange-assigned order identifier.
+    pub order_id: String,
+    /// The `clientOid` used to place the order (echoed back by the caller,
+    /// not parsed from the response body).
+    #[serde(skip)]
+    pub client_oid: String,
+}
+
 /// IDs of the orders a cancel endpoint actually cancelled.
 ///
 /// A single-order cancel returns the one ID; the bulk cancels (`?symbol=`)
@@ -48,8 +67,15 @@ pub struct CancelledOrders {
 }
 
 /// Full order detail returned by GET /api/v1/orders/{orderId}.
+///
+/// `#[non_exhaustive]`: KuCoin's wire shape keeps growing as new live fields
+/// are discovered, so this is deserialize-only and cannot be struct-literal
+/// constructed downstream — future fields can be added without a breaking
+/// change. Read state through the accessors ([`is_active`](Self::is_active),
+/// [`is_filled`](Self::is_filled), [`is_cancelled`](Self::is_cancelled)).
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
+#[non_exhaustive]
 pub struct OrderDetail {
     /// Exchange-assigned order identifier.
     pub id: String,
@@ -60,8 +86,23 @@ pub struct OrderDetail {
     #[serde(rename = "type")]
     /// Order type — `"market"` or `"limit"`.
     pub order_type: String,
-    /// `"active"` or `"done"`.
+    /// Order lifecycle string. KuCoin **Futures** only ever returns `"open"`
+    /// (resting on the book) or `"done"` (filled, cancelled, or expired).
+    /// `"active"` is the *query parameter* used to filter open orders — it is
+    /// **not** a wire value (a past version of this crate mistakenly compared
+    /// against it, misclassifying every resting order).
     pub status: String,
+    /// Authoritative "is this order still working" flag from KuCoin's
+    /// `isActive` field. `true` while the order rests on the book (including
+    /// partially-filled), `false` once it is filled/cancelled/expired. Absent
+    /// on some legacy/mocked payloads, in which case fall back to `status`.
+    #[serde(rename = "isActive")]
+    pub active: Option<bool>,
+    /// KuCoin's `cancelExist` flag — `true` when a cancellation has been
+    /// recorded for this order. Distinguishes a cancelled `done` order from a
+    /// fully-filled one.
+    #[serde(default)]
+    pub cancel_exist: Option<bool>,
     /// Limit price (absent for market orders).
     pub price: Option<f64>,
     /// Total order quantity in contracts.
@@ -83,12 +124,16 @@ pub struct OrderDetail {
 }
 
 impl OrderDetail {
-    /// Returns `true` if the order is still resting on the book.
+    /// Returns `true` if the order is still working (resting on the book,
+    /// including partially-filled).
     ///
-    /// KuCoin sets `status` to `"done"` once an order is fully filled,
-    /// cancelled, or expired. Any other value is treated as active.
+    /// Prefers KuCoin's authoritative `isActive` boolean when present;
+    /// otherwise falls back to the documented status semantics — KuCoin
+    /// Futures marks an order `"done"` once it is fully filled, cancelled, or
+    /// expired, and `"open"` while it rests on the book. Anything that is not
+    /// `"done"` is treated as active.
     pub fn is_active(&self) -> bool {
-        self.status == "active"
+        self.active.unwrap_or_else(|| self.status != "done")
     }
 
     /// Returns `true` if the order is fully filled.
@@ -97,6 +142,13 @@ impl OrderDetail {
     /// (all contracts matched) regardless of the `status` string.
     pub fn is_filled(&self) -> bool {
         self.filled_size.is_some_and(|f| f >= self.size)
+    }
+
+    /// Returns `true` if the order left the book without fully filling — i.e.
+    /// it is terminal (`!is_active()`) yet not [`is_filled`](Self::is_filled),
+    /// or KuCoin recorded a cancellation via `cancelExist`.
+    pub fn is_cancelled(&self) -> bool {
+        self.cancel_exist == Some(true) || (!self.is_active() && !self.is_filled())
     }
 }
 
@@ -200,6 +252,50 @@ impl KuCoinClient {
         reduce_only: bool,
         stp: Option<STP>,
     ) -> Result<OrderResponse> {
+        let submitted = self
+            .place_order_with_client_oid(
+                &Uuid::new_v4().to_string(),
+                symbol,
+                side,
+                size,
+                leverage,
+                order_type,
+                price,
+                time_in_force,
+                reduce_only,
+                stp,
+            )
+            .await?;
+        Ok(OrderResponse {
+            order_id: submitted.order_id,
+        })
+    }
+
+    /// Place a futures order with a **caller-supplied `clientOid`**, returning
+    /// that `clientOid` alongside the exchange order id.
+    ///
+    /// Identical to [`place_order`](Self::place_order) except the caller owns
+    /// the idempotency key. Retain the returned [`SubmittedOrder::client_oid`]:
+    /// if this call fails ambiguously (transport timeout — see
+    /// [`ExchangeError::classify_submit`]), you can still resolve whether the
+    /// order landed with
+    /// [`get_order_by_client_oid`](Self::get_order_by_client_oid). The KuCoin
+    /// HTTP retry loop re-sends the same serialized body, so the `clientOid`
+    /// also gives you server-side de-duplication across transport retries.
+    #[allow(clippy::similar_names, clippy::too_many_arguments)] // `side` and `size` are the correct public API parameter names
+    pub async fn place_order_with_client_oid(
+        &self,
+        client_oid: &str,
+        symbol: &str,
+        side: Side,
+        size: u32,
+        leverage: u32,
+        order_type: OrderType,
+        price: Option<f64>,
+        time_in_force: Option<TimeInForce>,
+        reduce_only: bool,
+        stp: Option<STP>,
+    ) -> Result<SubmittedOrder> {
         // Validate: KuCoin will reject a limit order without a price.
         if order_type == OrderType::Limit && price.is_none() {
             return Err(ExchangeError::Order(
@@ -209,7 +305,7 @@ impl KuCoinClient {
 
         let tif = time_in_force.unwrap_or_default().as_str();
         let mut body = json!({
-            "clientOid":   Uuid::new_v4().to_string(),
+            "clientOid":   client_oid,
             "side":        side.as_str(),
             "symbol":      symbol,
             "type":        order_type.as_str(),
@@ -227,10 +323,14 @@ impl KuCoinClient {
         info!(
             symbol, side = ?side, size, leverage,
             order_type = order_type.as_str(), tif, reduce_only,
-            price = ?price,
+            price = ?price, client_oid,
             "placing order"
         );
-        self.post("/api/v1/orders", &body).await
+        let resp: OrderResponse = self.post("/api/v1/orders", &body).await?;
+        Ok(SubmittedOrder {
+            order_id: resp.order_id,
+            client_oid: client_oid.to_string(),
+        })
     }
 
     /// Close an existing position with a market order.
@@ -243,13 +343,34 @@ impl KuCoinClient {
         qty: i32,
         leverage: u32,
     ) -> Result<OrderResponse> {
+        let submitted = self
+            .close_position_with_client_oid(&Uuid::new_v4().to_string(), symbol, qty, leverage)
+            .await?;
+        Ok(OrderResponse {
+            order_id: submitted.order_id,
+        })
+    }
+
+    /// Close a position with a **caller-supplied `clientOid`**, returning it
+    /// alongside the exchange order id.
+    ///
+    /// See [`place_order_with_client_oid`](Self::place_order_with_client_oid)
+    /// for why retaining the `clientOid` matters — a timed-out close is exactly
+    /// the ambiguous case where you must be able to re-query by `clientOid`.
+    pub async fn close_position_with_client_oid(
+        &self,
+        client_oid: &str,
+        symbol: &str,
+        qty: i32,
+        leverage: u32,
+    ) -> Result<SubmittedOrder> {
         if qty == 0 {
             return Err(ExchangeError::Order("qty is 0 — nothing to close".into()));
         }
         let side = if qty > 0 { Side::Sell } else { Side::Buy };
         let abs_qty = qty.unsigned_abs();
         let body = json!({
-            "clientOid":   Uuid::new_v4().to_string(),
+            "clientOid":   client_oid,
             "side":        side.as_str(),
             "symbol":      symbol,
             "type":        "market",
@@ -258,8 +379,28 @@ impl KuCoinClient {
             "closeOrder":  true,
             "timeInForce": "GTC",
         });
-        info!(symbol, qty, side = ?side, "closing position");
-        self.post("/api/v1/orders", &body).await
+        info!(symbol, qty, side = ?side, client_oid, "closing position");
+        let resp: OrderResponse = self.post("/api/v1/orders", &body).await?;
+        Ok(SubmittedOrder {
+            order_id: resp.order_id,
+            client_oid: client_oid.to_string(),
+        })
+    }
+
+    /// Fetch a single order by the **`clientOid`** used to place it.
+    ///
+    /// Endpoint: `GET /api/v1/orders/byClientOid?clientOid={clientOid}`.
+    ///
+    /// This is the recovery primitive for an ambiguous submit: after a
+    /// [`place_order_with_client_oid`](Self::place_order_with_client_oid) (or
+    /// close) times out, call this to learn whether the order actually landed —
+    /// an [`ExchangeError::Api`] with a "not found" code means it never did,
+    /// otherwise the returned [`OrderDetail`] tells you its live state. KuCoin
+    /// only resolves *unfilled/active* orders and recently-done orders by
+    /// `clientOid`; very old done orders may 404.
+    pub async fn get_order_by_client_oid(&self, client_oid: &str) -> Result<OrderDetail> {
+        self.get("/api/v1/orders/byClientOid", &[("clientOid", client_oid)])
+            .await
     }
 
     /// Cancel a specific order by its KuCoin order ID.
@@ -328,9 +469,45 @@ impl KuCoinClient {
         price: Option<f64>,
         reduce_only: bool,
     ) -> Result<OrderResponse> {
+        let submitted = self
+            .place_stop_order_with_client_oid(
+                &Uuid::new_v4().to_string(),
+                symbol,
+                side,
+                size,
+                leverage,
+                stop_price,
+                stop_type,
+                price,
+                reduce_only,
+            )
+            .await?;
+        Ok(OrderResponse {
+            order_id: submitted.order_id,
+        })
+    }
+
+    /// Place a stop order with a **caller-supplied `clientOid`**, returning it
+    /// alongside the exchange order id. See
+    /// [`place_stop_order`](Self::place_stop_order) for the placement details
+    /// and [`place_order_with_client_oid`](Self::place_order_with_client_oid)
+    /// for why the `clientOid` matters.
+    #[allow(clippy::similar_names, clippy::too_many_arguments)]
+    pub async fn place_stop_order_with_client_oid(
+        &self,
+        client_oid: &str,
+        symbol: &str,
+        side: Side,
+        size: u32,
+        leverage: u32,
+        stop_price: f64,
+        stop_type: &str,
+        price: Option<f64>,
+        reduce_only: bool,
+    ) -> Result<SubmittedOrder> {
         let order_type = if price.is_some() { "limit" } else { "market" };
         let mut body = json!({
-            "clientOid":     Uuid::new_v4().to_string(),
+            "clientOid":     client_oid,
             "side":          side.as_str(),
             "symbol":        symbol,
             "type":          order_type,
@@ -344,11 +521,15 @@ impl KuCoinClient {
         if let Some(lp) = price {
             body["price"] = json!(lp.to_string());
         }
-        info!(symbol, side = ?side, size, stop_price, stop_type, "placing stop order");
+        info!(symbol, side = ?side, size, stop_price, stop_type, client_oid, "placing stop order");
         // KuCoin Futures places (untriggered) stop orders through the regular
         // orders endpoint with stop/stopPrice/stopPriceType; `/api/v1/stopOrders`
         // is GET/DELETE only — POSTing there returns 400007 ("require more permission").
-        self.post("/api/v1/orders", &body).await
+        let resp: OrderResponse = self.post("/api/v1/orders", &body).await?;
+        Ok(SubmittedOrder {
+            order_id: resp.order_id,
+            client_oid: client_oid.to_string(),
+        })
     }
 
     /// Cancel a stop order by its order ID.

@@ -44,7 +44,39 @@ pub fn build_headers(
     endpoint: &str,
     body: &str,
 ) -> Result<HeaderMap> {
-    let ts = chrono::Utc::now().timestamp_millis().to_string();
+    build_headers_with_offset(key, secret, passphrase, method, endpoint, body, 0)
+}
+
+/// Local wall-clock in milliseconds, shifted by a signed `offset_ms`.
+///
+/// `offset_ms` is `server_time - local_time`, so adding it yields the
+/// exchange's clock. Kept as a tiny pure function so the skew math is unit
+/// testable without a clock. Saturates rather than overflowing on absurd
+/// offsets.
+pub const fn skewed_timestamp_ms(local_ms: i64, offset_ms: i64) -> i64 {
+    local_ms.saturating_add(offset_ms)
+}
+
+/// As [`build_headers`], but applies a signed server-time `offset_ms` (in
+/// milliseconds) to the `KC-API-TIMESTAMP` used for signing.
+///
+/// Pass the cached offset from
+/// [`KuCoinClient::time_offset_ms`][crate::KuCoinClient::time_offset_ms]
+/// (obtained via [`KuCoinClient::sync_server_time`][crate::KuCoinClient::sync_server_time])
+/// so signed timestamps track KuCoin's clock and survive local NTP drift
+/// beyond the venue's ±5 s tolerance. An offset of `0` is identical to
+/// [`build_headers`].
+pub fn build_headers_with_offset(
+    key: &str,
+    secret: &str,
+    passphrase: &str,
+    method: &str,
+    endpoint: &str,
+    body: &str,
+    offset_ms: i64,
+) -> Result<HeaderMap> {
+    let local_ms = chrono::Utc::now().timestamp_millis();
+    let ts = skewed_timestamp_ms(local_ms, offset_ms).to_string();
     let prehash = format!("{}{}{}{}", ts, method.to_uppercase(), endpoint, body);
 
     let sig = hmac_b64(secret, &prehash);
@@ -106,5 +138,49 @@ mod tests {
         // A NUL byte is not valid in a header value.
         let result = build_headers("key\0bad", "secret", "pass", "GET", "/api/v1/test", "");
         assert!(result.is_err());
+    }
+
+    /// Known-answer test — pins the exact KuCoin key-v2 signing recipe
+    /// (`base64(HMAC-SHA256(secret, ts+METHOD+endpoint+body))` and the
+    /// separately-signed passphrase) against a vector computed independently
+    /// with Python's `hmac`/`base64`. Guards against silent drift in the
+    /// pre-hash construction. Mirrors Binance's signing KAT.
+    #[test]
+    fn kucoin_signing_known_answer() {
+        let secret = "test-secret-key";
+        let ts = "1700000000000";
+        let prehash = format!("{ts}POST/api/v1/orders{{\"symbol\":\"XBTUSDTM\"}}");
+        assert_eq!(
+            hmac_b64(secret, &prehash),
+            "ryn3lauCKysTv31+K11M0amC+pXlovaOmWA+b6zlOlI="
+        );
+        assert_eq!(
+            hmac_b64(secret, "passphrase123"),
+            "izTy93wNW0Z4fyogazVQ1Ix0SgSFLXX/UCS8qeO8ebs="
+        );
+    }
+
+    #[test]
+    fn skewed_timestamp_applies_offset() {
+        assert_eq!(skewed_timestamp_ms(1_000, 250), 1_250);
+        assert_eq!(skewed_timestamp_ms(1_000, -250), 750);
+        assert_eq!(skewed_timestamp_ms(1_000, 0), 1_000);
+    }
+
+    #[test]
+    fn skewed_timestamp_saturates_instead_of_overflowing() {
+        assert_eq!(skewed_timestamp_ms(i64::MAX, 1), i64::MAX);
+        assert_eq!(skewed_timestamp_ms(i64::MIN, -1), i64::MIN);
+    }
+
+    #[test]
+    fn zero_offset_headers_match_default_builder() {
+        // Both builders sign with `Utc::now()`; a zero offset must not change
+        // the signing recipe. We can't compare signatures (timestamps differ
+        // by microseconds) but the header *set* must be identical.
+        let a = build_headers("k", "s", "p", "GET", "/api/v1/x", "").unwrap();
+        let b = build_headers_with_offset("k", "s", "p", "GET", "/api/v1/x", "", 0).unwrap();
+        assert_eq!(a.len(), b.len());
+        assert_eq!(a.get("KC-API-KEY-VERSION"), b.get("KC-API-KEY-VERSION"));
     }
 }
