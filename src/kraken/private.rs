@@ -220,6 +220,84 @@ pub struct KrakenLedgers {
     pub count: u64,
 }
 
+/// Optional `AddOrder` parameters for [`KrakenPrivateClient::place_order_with`].
+///
+/// Every field defaults to "not sent", so `KrakenOrderOptions::default()` is
+/// exactly the plain order [`KrakenPrivateClient::place_order`] places.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct KrakenOrderOptions {
+    /// `oflags=post`: maker only. Kraken cancels the order rather than let
+    /// it take liquidity, so it can never pay the taker fee.
+    pub post_only: bool,
+    /// `validate=true`: Kraken checks the order and describes it without
+    /// placing it. The response then carries no txid.
+    pub validate: bool,
+    /// `cl_ord_id`: a client order id, unique among the account's OPEN
+    /// orders. Kraken refuses a second open order with the same id, which is
+    /// what makes a resend after a lost response detectable rather than a
+    /// silent duplicate. A UUID (with or without dashes) or up to 18 ASCII
+    /// characters.
+    pub client_order_id: Option<String>,
+    /// `timeinforce=GTD` + `expiretm=+N`: Kraken cancels whatever is left of
+    /// the order N seconds after accepting it (Kraken's minimum is 5).
+    pub expire_after_secs: Option<u64>,
+}
+
+/// Filters for [`KrakenPrivateClient::get_ledgers`]. Every field defaults to
+/// "not sent", which is Kraken's own default: all assets, all types, the
+/// most recent page.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct KrakenLedgerQuery<'a> {
+    /// `asset`: a comma-separated list of asset codes, e.g. `"ZUSD,XXBT"`.
+    pub asset: Option<&'a str>,
+    /// `type`: `deposit`, `withdrawal`, `trade`, `margin`, `rollover`,
+    /// `credit`, `transfer`, `settled`, `staking` or `sale`.
+    pub entry_type: Option<&'a str>,
+    /// `start`: only entries AFTER this Unix time (exclusive), in seconds.
+    pub start: Option<u64>,
+    /// `end`: only entries up to this Unix time (inclusive), in seconds.
+    pub end: Option<u64>,
+    /// `ofs`: how many entries to skip, to page past Kraken's 50 per call.
+    pub offset: Option<u64>,
+}
+
+/// One pair's fee from `POST /0/private/TradeVolume`, as percentages.
+#[derive(Debug, Clone, Deserialize)]
+pub struct KrakenFeeTier {
+    /// The account's current fee on this pair, in percent (`"0.4000"`).
+    pub fee: String,
+    /// The lowest fee this pair's schedule reaches.
+    #[serde(default)]
+    pub minfee: String,
+    /// The highest fee this pair's schedule starts at.
+    #[serde(default)]
+    pub maxfee: String,
+    /// The fee at the next volume tier, or `None` at the last tier.
+    #[serde(default)]
+    pub nextfee: Option<String>,
+    /// The 30-day volume the next tier needs, or `None` at the last tier.
+    #[serde(default)]
+    pub nextvolume: Option<String>,
+    /// The volume at which the current tier began.
+    #[serde(default)]
+    pub tiervolume: Option<String>,
+}
+
+/// Response from `POST /0/private/TradeVolume`.
+#[derive(Debug, Clone, Deserialize)]
+pub struct KrakenTradeVolume {
+    /// Currency the volume is counted in (e.g. `"ZUSD"`).
+    pub currency: String,
+    /// The account's 30-day trade volume in that currency.
+    pub volume: String,
+    /// Taker fees per requested pair, keyed by Kraken's pair name.
+    #[serde(default)]
+    pub fees: HashMap<String, KrakenFeeTier>,
+    /// Maker fees per requested pair, keyed by Kraken's pair name.
+    #[serde(default)]
+    pub fees_maker: HashMap<String, KrakenFeeTier>,
+}
+
 /// One withdrawal record from `POST /0/private/WithdrawStatus`.
 #[derive(Debug, Clone, Deserialize)]
 pub struct KrakenWithdrawalRecord {
@@ -430,7 +508,45 @@ impl KrakenPrivateClient {
         volume: &str,
         price: Option<&str>,
     ) -> Result<KrakenAddOrderResponse> {
-        info!(pair, side, order_type, volume, ?price, "Kraken place order");
+        self.place_order_with(
+            pair,
+            side,
+            order_type,
+            volume,
+            price,
+            &KrakenOrderOptions::default(),
+        )
+        .await
+    }
+
+    /// `POST /0/private/AddOrder` with the optional flags in
+    /// [`KrakenOrderOptions`]: post-only, validate-only, a client order id,
+    /// and a relative expiry.
+    ///
+    /// The request is retried on transient failures like every private call
+    /// here, and AddOrder is not idempotent: if a first attempt reached
+    /// Kraken but its response was lost, a resend is a second order. Setting
+    /// `client_order_id` makes that resend fail while the first is still open
+    /// instead of duplicating it.
+    #[allow(clippy::too_many_arguments)]
+    pub async fn place_order_with(
+        &self,
+        pair: &str,
+        side: &str,       // "buy" or "sell"
+        order_type: &str, // "limit", "market", "stop-loss", ...
+        volume: &str,
+        price: Option<&str>,
+        opts: &KrakenOrderOptions,
+    ) -> Result<KrakenAddOrderResponse> {
+        info!(
+            pair,
+            side,
+            order_type,
+            volume,
+            ?price,
+            ?opts,
+            "Kraken place order"
+        );
         let mut params: Vec<(&str, &str)> = vec![
             ("pair", pair),
             ("type", side),
@@ -439,6 +555,20 @@ impl KrakenPrivateClient {
         ];
         if let Some(p) = price {
             params.push(("price", p));
+        }
+        if opts.post_only {
+            params.push(("oflags", "post"));
+        }
+        if opts.validate {
+            params.push(("validate", "true"));
+        }
+        if let Some(id) = opts.client_order_id.as_deref() {
+            params.push(("cl_ord_id", id));
+        }
+        let expiry = opts.expire_after_secs.map(|secs| format!("+{secs}"));
+        if let Some(e) = expiry.as_deref() {
+            params.push(("timeinforce", "GTD"));
+            params.push(("expiretm", e));
         }
         self.post("/0/private/AddOrder", &params).await
     }
@@ -464,7 +594,51 @@ impl KrakenPrivateClient {
     /// `POST /0/private/Ledgers` — ledger entries for an asset
     /// (paginated; surfaces the first page).
     pub async fn get_ledger(&self, asset: &str) -> Result<KrakenLedgers> {
-        self.post("/0/private/Ledgers", &[("asset", asset)]).await
+        self.get_ledgers(&KrakenLedgerQuery {
+            asset: Some(asset),
+            ..KrakenLedgerQuery::default()
+        })
+        .await
+    }
+
+    /// `POST /0/private/Ledgers` with filters: asset, entry type, a time
+    /// window and an offset. Kraken returns at most 50 entries per call, so a
+    /// full history is paged with `offset` until `ledger` comes back empty
+    /// or the running total reaches `count`.
+    pub async fn get_ledgers(&self, q: &KrakenLedgerQuery<'_>) -> Result<KrakenLedgers> {
+        let start = q.start.map(|v| v.to_string());
+        let end = q.end.map(|v| v.to_string());
+        let offset = q.offset.map(|v| v.to_string());
+        let mut params: Vec<(&str, &str)> = Vec::new();
+        if let Some(a) = q.asset {
+            params.push(("asset", a));
+        }
+        if let Some(t) = q.entry_type {
+            params.push(("type", t));
+        }
+        if let Some(v) = start.as_deref() {
+            params.push(("start", v));
+        }
+        if let Some(v) = end.as_deref() {
+            params.push(("end", v));
+        }
+        if let Some(v) = offset.as_deref() {
+            params.push(("ofs", v));
+        }
+        self.post("/0/private/Ledgers", &params).await
+    }
+
+    /// `POST /0/private/TradeVolume` — the account's 30-day volume and its
+    /// actual maker and taker fee on each of `pairs` (Kraken pair names,
+    /// e.g. `"XBTUSD"`). Kraken's public `AssetPairs` no longer carries fee
+    /// schedules, so this is where the real tier comes from.
+    pub async fn get_trade_volume(&self, pairs: &[&str]) -> Result<KrakenTradeVolume> {
+        let joined = pairs.join(",");
+        let mut params: Vec<(&str, &str)> = Vec::new();
+        if !joined.is_empty() {
+            params.push(("pair", &joined));
+        }
+        self.post("/0/private/TradeVolume", &params).await
     }
 
     /// `POST /0/private/Withdraw` — withdraw funds to a pre-registered

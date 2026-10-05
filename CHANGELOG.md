@@ -6,6 +6,25 @@ and the project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.
 
 ## [Unreleased]
 
+### Added
+
+- **Kraken: `KrakenPrivateClient::place_order_with`** and
+  `KrakenOrderOptions`: post-only (`oflags=post`), validate-only, a client
+  order id (`cl_ord_id`) and a relative expiry (`timeinforce=GTD` +
+  `expiretm=+N`). Post-only is what keeps a resting limit from ever paying
+  the taker fee. AddOrder is retried on transient failures like every
+  private call, and is not idempotent; a client order id makes a resend fail
+  while the first order is open instead of duplicating it. `place_order` is
+  now `place_order_with` with default options and sends exactly what it did.
+- **Kraken: `KrakenPrivateClient::get_ledgers`** and `KrakenLedgerQuery`:
+  ledger entries filtered by asset, type (`deposit`, `withdrawal`, ...),
+  time window and offset, so a history longer than Kraken's 50-entry page
+  can be read. `get_ledger(asset)` is now a call to it.
+- **Kraken: `KrakenPrivateClient::get_trade_volume`**, with
+  `KrakenTradeVolume` and `KrakenFeeTier`: the account's 30-day volume and
+  its real maker and taker fee per pair. Kraken's public `AssetPairs` no
+  longer carries fee schedules.
+
 ## [0.11.0] - 2026-07-19
 
 M2 KuCoin-futures venue-truth hardening — the live-trading correctness fixes
