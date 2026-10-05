@@ -15,10 +15,14 @@
 //! | `get_open_orders_returns_typed` | `/0/private/OpenOrders` |
 //! | `get_closed_orders_returns_count` | `/0/private/ClosedOrders` |
 //! | `place_order_returns_txid` | `/0/private/AddOrder` |
+//! | `place_order_with_sends_every_option` | `/0/private/AddOrder` |
+//! | `place_order_sends_no_optional_flags_by_default` | `/0/private/AddOrder` |
 //! | `cancel_order_returns_count` | `/0/private/CancelOrder` |
 //! | `cancel_all_orders_returns_count` | `/0/private/CancelAll` |
 //! | `get_trades_history_returns_typed` | `/0/private/TradesHistory` |
 //! | `get_ledger_returns_typed` | `/0/private/Ledgers` |
+//! | `get_ledgers_sends_every_filter` | `/0/private/Ledgers` |
+//! | `get_trade_volume_returns_maker_and_taker_fees` | `/0/private/TradeVolume` |
 //! | `withdraw_returns_refid` | `/0/private/Withdraw` |
 //! | `get_withdrawal_status_returns_typed` | `/0/private/WithdrawStatus` |
 //! | `error_envelope_surfaces_as_api_error` | error propagation |
@@ -28,6 +32,7 @@
 //! cargo test --test kraken_private_mock
 //! ```
 
+use exchange_apiws::kraken::{KrakenLedgerQuery, KrakenOrderOptions};
 use exchange_apiws::{ExchangeError, KrakenCredentials, KrakenPrivateClient};
 use wiremock::matchers::{body_string_contains, header_exists, method, path};
 use wiremock::{Mock, MockServer, ResponseTemplate};
@@ -168,6 +173,72 @@ async fn place_order_returns_txid() {
 }
 
 #[tokio::test]
+async fn place_order_with_sends_every_option() {
+    let server = MockServer::start().await;
+    Mock::given(method("POST"))
+        .and(path("/0/private/AddOrder"))
+        .and(body_string_contains("pair=XBTUSD"))
+        .and(body_string_contains("oflags=post"))
+        .and(body_string_contains("validate=true"))
+        .and(body_string_contains("cl_ord_id=rebal-btc-1005"))
+        .and(body_string_contains("timeinforce=GTD"))
+        // "+30" form-encoded: Kraken reads a leading + as "seconds from now".
+        .and(body_string_contains("expiretm=%2B30"))
+        .respond_with(
+            // A validate-only order is described but never placed, so Kraken
+            // returns no txid.
+            ResponseTemplate::new(200).set_body_json(ok_envelope(serde_json::json!({
+                "descr": {"order": "buy 0.00100000 XBTUSD @ limit 60000.0"}
+            }))),
+        )
+        .expect(1)
+        .mount(&server)
+        .await;
+
+    let opts = KrakenOrderOptions {
+        post_only: true,
+        validate: true,
+        client_order_id: Some("rebal-btc-1005".into()),
+        expire_after_secs: Some(30),
+    };
+    let r = sim_client(&server)
+        .place_order_with("XBTUSD", "buy", "limit", "0.001", Some("60000"), &opts)
+        .await
+        .expect("validated order");
+    assert!(r.txid.is_empty());
+    assert!(r.descr.unwrap().order.contains("XBTUSD"));
+}
+
+#[tokio::test]
+async fn place_order_sends_no_optional_flags_by_default() {
+    let server = MockServer::start().await;
+    Mock::given(method("POST"))
+        .and(path("/0/private/AddOrder"))
+        .respond_with(
+            ResponseTemplate::new(200).set_body_json(ok_envelope(serde_json::json!({
+                "descr": {"order": "sell 0.5 ETHUSD @ limit 3000"},
+                "txid": ["OABCDE-FGHIJ-KLMNOP"]
+            }))),
+        )
+        .expect(1)
+        .mount(&server)
+        .await;
+
+    sim_client(&server)
+        .place_order("ETHUSD", "sell", "limit", "0.5", Some("3000"))
+        .await
+        .expect("plain order");
+
+    // The plain call must stay byte-for-byte the order it always was: none
+    // of the new parameters may leak into it by default.
+    let requests = server.received_requests().await.expect("recording on");
+    let body = String::from_utf8_lossy(&requests[0].body).into_owned();
+    for absent in ["oflags", "validate", "cl_ord_id", "timeinforce", "expiretm"] {
+        assert!(!body.contains(absent), "{absent} sent by default: {body}");
+    }
+}
+
+#[tokio::test]
 async fn cancel_order_returns_count() {
     let server = MockServer::start().await;
     Mock::given(method("POST"))
@@ -263,6 +334,93 @@ async fn get_ledger_returns_typed() {
     let e = &l.ledger["L1"];
     assert_eq!(e.entry_type, "trade");
     assert_eq!(e.asset, "XXBT");
+}
+
+#[tokio::test]
+async fn get_ledgers_sends_every_filter() {
+    let server = MockServer::start().await;
+    Mock::given(method("POST"))
+        .and(path("/0/private/Ledgers"))
+        .and(body_string_contains("asset=ZUSD%2CUSDC"))
+        .and(body_string_contains("type=deposit"))
+        .and(body_string_contains("start=1759622400"))
+        .and(body_string_contains("end=1759708800"))
+        .and(body_string_contains("ofs=50"))
+        .respond_with(
+            ResponseTemplate::new(200).set_body_json(ok_envelope(serde_json::json!({
+                "ledger": {
+                    "L4UESK-KG3EQ-UFO4T5": {
+                        "refid": "FTQcuak-V6Za8qrWnhzTx67yYHz8Tg",
+                        "time": 1_759_650_000.123_4,
+                        "type": "deposit",
+                        "subtype": "",
+                        "aclass": "currency",
+                        "asset": "ZUSD",
+                        "amount": "100.0000",
+                        "fee": "0.0000",
+                        "balance": "196.6900"
+                    }
+                },
+                "count": 51
+            }))),
+        )
+        .expect(1)
+        .mount(&server)
+        .await;
+
+    let q = KrakenLedgerQuery {
+        asset: Some("ZUSD,USDC"),
+        entry_type: Some("deposit"),
+        start: Some(1_759_622_400),
+        end: Some(1_759_708_800),
+        offset: Some(50),
+    };
+    let r = sim_client(&server).get_ledgers(&q).await.expect("ledgers");
+    assert_eq!(r.count, 51);
+    let entry = &r.ledger["L4UESK-KG3EQ-UFO4T5"];
+    assert_eq!(entry.entry_type, "deposit");
+    assert_eq!(entry.amount, "100.0000");
+}
+
+#[tokio::test]
+async fn get_trade_volume_returns_maker_and_taker_fees() {
+    let server = MockServer::start().await;
+    Mock::given(method("POST"))
+        .and(path("/0/private/TradeVolume"))
+        .and(body_string_contains("pair=XBTUSD%2CETHUSD"))
+        .respond_with(
+            ResponseTemplate::new(200).set_body_json(ok_envelope(serde_json::json!({
+                "currency": "ZUSD",
+                "volume": "71.1400",
+                "fees": {
+                    "XXBTZUSD": {"fee": "0.8000", "minfee": "0.1000", "maxfee": "0.8000",
+                                 "nextfee": "0.6000", "nextvolume": "2500.0000",
+                                 "tiervolume": "0.0000"},
+                    "XETHZUSD": {"fee": "0.1000", "minfee": "0.1000", "maxfee": "0.8000",
+                                 "nextfee": null, "nextvolume": null,
+                                 "tiervolume": "10000000.0000"}
+                },
+                "fees_maker": {
+                    "XXBTZUSD": {"fee": "0.4000", "minfee": "0.0000", "maxfee": "0.4000",
+                                 "nextfee": "0.3500", "nextvolume": "2500.0000",
+                                 "tiervolume": "0.0000"}
+                }
+            }))),
+        )
+        .expect(1)
+        .mount(&server)
+        .await;
+
+    let v = sim_client(&server)
+        .get_trade_volume(&["XBTUSD", "ETHUSD"])
+        .await
+        .expect("trade volume");
+    assert_eq!(v.currency, "ZUSD");
+    assert_eq!(v.fees["XXBTZUSD"].fee, "0.8000");
+    assert_eq!(v.fees_maker["XXBTZUSD"].fee, "0.4000");
+    assert_eq!(v.fees["XXBTZUSD"].nextfee.as_deref(), Some("0.6000"));
+    // The last tier has nowhere further to go: Kraken sends null.
+    assert_eq!(v.fees["XETHZUSD"].nextfee, None);
 }
 
 #[tokio::test]

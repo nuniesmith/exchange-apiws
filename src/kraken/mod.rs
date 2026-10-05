@@ -15,9 +15,10 @@ pub mod ws;
 
 pub use auth::{KrakenCredentials, form_encode, sign_kraken_request};
 pub use private::{
-    KrakenAddOrderResponse, KrakenCancelResponse, KrakenClosedOrders, KrakenLedgerEntry,
-    KrakenLedgers, KrakenOpenOrders, KrakenOrder, KrakenOrderDescr, KrakenPrivateClient,
-    KrakenTradeHistoryEntry, KrakenTradesHistory, KrakenWithdrawResponse, KrakenWithdrawalRecord,
+    KrakenAddOrderResponse, KrakenCancelResponse, KrakenClosedOrders, KrakenFeeTier,
+    KrakenLedgerEntry, KrakenLedgerQuery, KrakenLedgers, KrakenOpenOrders, KrakenOrder,
+    KrakenOrderDescr, KrakenOrderOptions, KrakenPrivateClient, KrakenTradeHistoryEntry,
+    KrakenTradeVolume, KrakenTradesHistory, KrakenWithdrawResponse, KrakenWithdrawalRecord,
     KrakenWsToken,
 };
 pub use rest::{
