@@ -420,7 +420,7 @@ fn parse_ticker(symbol: &str, exchange: &str, data: &Value) -> Vec<DataMessage> 
     // price-threshold logic (e.g. stop-losses). Fall back to the bid/ask mid.
     let price = match str_f64(data, "price") {
         p if p > 0.0 => p,
-        _ if best_bid > 0.0 && best_ask > 0.0 => 0.5 * (best_bid + best_ask),
+        _ if best_bid > 0.0 && best_ask > 0.0 => f64::midpoint(best_bid, best_ask),
         p => p,
     };
 
