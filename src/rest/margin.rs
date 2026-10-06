@@ -354,7 +354,7 @@ mod tests {
         // been cancelled by another client — must round-trip cleanly.
         let raw = r#"{"cancelledOrderIds":[]}"#;
         let r: CancelMarginOrderResponse = serde_json::from_str(raw).expect("deserialize");
-        assert!(r.cancelled_order_ids.is_empty());
+        assert_eq!(r.cancelled_order_ids, Vec::<String>::new());
     }
 
     #[test]

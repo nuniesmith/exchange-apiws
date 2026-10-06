@@ -940,7 +940,7 @@ mod tests {
         .expect("deserialize minimal order");
         assert_eq!(order.order_id, "1");
         assert!(order.limit_price.is_none());
-        assert!(order.exec_inst.is_empty());
+        assert_eq!(order.exec_inst, Vec::<String>::new());
         assert_eq!(order.create_time, 0);
         assert!((order.quantity_f64() - 0.5).abs() < 1e-9);
     }

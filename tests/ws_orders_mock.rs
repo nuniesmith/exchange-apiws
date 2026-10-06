@@ -93,7 +93,7 @@ async fn place_order_round_trip() {
 
     assert!(ack.success);
     assert_eq!(ack.order_id.as_deref(), Some("order-7"));
-    assert!(!ack.client_oid.is_empty());
+    assert_ne!(ack.client_oid, "");
     client.close();
 }
 
