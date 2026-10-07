@@ -205,7 +205,7 @@ async fn place_order_with_sends_every_option() {
         .place_order_with("XBTUSD", "buy", "limit", "0.001", Some("60000"), &opts)
         .await
         .expect("validated order");
-    assert!(r.txid.is_empty());
+    assert_eq!(r.txid, Vec::<String>::new());
     assert!(r.descr.unwrap().order.contains("XBTUSD"));
 }
 

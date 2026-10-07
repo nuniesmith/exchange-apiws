@@ -932,7 +932,7 @@ async fn cancel_all_stop_orders_no_open_stops_returns_empty() {
         .await
         .expect("cancel_all_stop_orders failed");
 
-    assert!(resp.cancelled_order_ids.is_empty());
+    assert_eq!(resp.cancelled_order_ids, Vec::<String>::new());
 }
 
 // ── get_done_orders ───────────────────────────────────────────────────────────
@@ -1804,7 +1804,7 @@ async fn cancel_margin_order_already_done_returns_empty() {
         .cancel_margin_order("o-1")
         .await
         .expect("cancel margin order");
-    assert!(r.cancelled_order_ids.is_empty());
+    assert_eq!(r.cancelled_order_ids, Vec::<String>::new());
 }
 
 #[tokio::test]
