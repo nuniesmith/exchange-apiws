@@ -9,6 +9,7 @@ on:
 
 permissions:
   contents: write
+  actions: write # to dispatch ci.yml on the new tag
 
 env:
   MANIFEST_DIR: "."
@@ -46,3 +47,13 @@ jobs:
           git tag "$TAG"
           git push origin HEAD
           git push origin "$TAG"
+
+      # A push made with this workflow's own token starts no other workflow,
+      # so the tag push above never reaches ci.yml or its publish job: 0.12.0
+      # was tagged on 2026-10-18 and published only after the tag was
+      # re-pushed by hand. A workflow_dispatch is the one event that token
+      # may start, and on a tag ref ci.yml runs every gate, then publishes.
+      - name: Run CI and publish on the tag
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh workflow run ci.yml --ref "${{ env.TAG_PREFIX }}${{ inputs.new-version }}"
