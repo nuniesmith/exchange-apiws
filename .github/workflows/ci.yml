@@ -5,6 +5,8 @@ on:
     branches: [main]
     tags: ["v[0-9]+.[0-9]+.[0-9]+"]
   pull_request:
+  # release.yml dispatches this on the tag it pushes: see the note there.
+  workflow_dispatch:
 
 # Cancel superseded runs on the same ref to save CI minutes.
 concurrency:
