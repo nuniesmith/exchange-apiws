@@ -6,6 +6,8 @@ and the project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.
 
 ## [Unreleased]
 
+## [0.12.0] - 2026-10-18
+
 ### Added
 
 - **Kraken: `KrakenPrivateClient::place_order_with`** and
@@ -739,7 +741,9 @@ Initial KuCoin Futures REST + WebSocket implementation, including:
 - Bullet-public / bullet-private WS token negotiation
 - 100 msg / 10 s sliding-window outbound rate limit
 
-[Unreleased]: https://github.com/nuniesmith/exchange-apiws/compare/v0.10.1...HEAD
+[Unreleased]: https://github.com/nuniesmith/exchange-apiws/compare/v0.12.0...HEAD
+[0.12.0]: https://github.com/nuniesmith/exchange-apiws/compare/v0.11.0...v0.12.0
+[0.11.0]: https://github.com/nuniesmith/exchange-apiws/compare/v0.10.1...v0.11.0
 [0.10.1]: https://github.com/nuniesmith/exchange-apiws/compare/v0.10.0...v0.10.1
 [0.10.0]: https://github.com/nuniesmith/exchange-apiws/compare/v0.9.0...v0.10.0
 [0.9.0]: https://github.com/nuniesmith/exchange-apiws/compare/v0.8.1...v0.9.0
